@@ -4,17 +4,18 @@ class Dante.Editor.PopOver extends Dante.View
   el: "body"
 
   events:
-    "mouseover .popover": "cancelHide"
-    "mouseout  .popover": "hide"
+    "mouseover .popover--tooltip": "cancelHide"
+    "mouseout  .popover--tooltip": "hide"
 
   initialize: (opts = {})->
     utils.log("initialized popover")
+    @pop_over_element = ".popover--tooltip"
     @editor = opts.editor
     @hideTimeout
     @settings = {timeout: 300}
 
   template: ()->
-    "<div class='popover popover--tooltip popover--Linktooltip popover--bottom is-active'>
+    "<div class='dante-popover popover--tooltip popover--Linktooltip popover--bottom is-active'>
       <div class='popover-inner'>
         <a href='#' target='_blank'> Link </a>
       </div>
@@ -25,15 +26,16 @@ class Dante.Editor.PopOver extends Dante.View
   #display & copy original link
   positionAt: (ev)->
     target           = $(ev.currentTarget)
+    wrapperOffset    = target.closest('article.postArticle').offset()
     target_positions = @resolveTargetPosition(target)
     target_offset    = target.offset()
     target_width     = target.outerWidth()
     target_height    = target.outerHeight()
-    popover_width    = $(@el).find(".popover").outerWidth()
+    popover_width    = @findElement().outerWidth()
     top_value        = target_positions.top + target_height
-    left_value       = target_offset.left + (target_width/2) - (popover_width/2)
+    left_value       = target_offset.left + (target_width/2) - (popover_width/2) - wrapperOffset.left
 
-    $(@el).find(".popover")
+    @findElement()
       .css("top", top_value)
       .css("left",  left_value )
       .show()
@@ -43,9 +45,12 @@ class Dante.Editor.PopOver extends Dante.View
   displayAt: (ev)->
     @cancelHide()
     target = $(ev.currentTarget)
-    $(@el).find(".popover-inner a").text( target.attr('href') ).attr('href', target.attr("href") )
+    @findElement()
+      .find(".popover-inner a")
+      .text( target.attr('href') )
+      .attr('href', target.attr("href") )
     @positionAt(ev)
-    $(@el).find(".popover--tooltip").css("pointer-events", "auto")
+    @findElement().css("pointer-events", "auto")
     $(@el).show()
 
   cancelHide: ()->
@@ -55,7 +60,7 @@ class Dante.Editor.PopOver extends Dante.View
   hide: (ev)->
     @cancelHide()
     @hideTimeout = setTimeout ()=>
-      $(@el).find(".popover").hide()
+      @findElement().hide()
     , @settings.timeout
 
   resolveTargetPosition: (target)->
@@ -64,12 +69,14 @@ class Dante.Editor.PopOver extends Dante.View
     else
       target.position()
 
-
   handleDirection: (target)->
     if target.parents(".graf--mixtapeEmbed").exists()
-      $(@el).find(".popover").removeClass("popover--bottom").addClass("popover--top")
+      @findElement().removeClass("popover--bottom").addClass("popover--top")
     else
-      $(@el).find(".popover").removeClass("popover--top").addClass("popover--bottom")
+      @findElement().removeClass("popover--top").addClass("popover--bottom")
+
+  findElement: ()->
+    $(@el).find(@pop_over_element)
 
   render: ()->
     $(@template()).insertAfter(@editor.$el)

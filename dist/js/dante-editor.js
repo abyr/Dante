@@ -5,10 +5,11 @@
       PopOver: {},
       Menu: {}
     },
+    Article: {},
     defaults: {
       image_placeholder: '../images/dante/media-loading-placeholder.png'
     },
-    version: "0.0.14"
+    version: "0.1.7"
   };
 
 }).call(this);
@@ -440,8 +441,7 @@
       this.setupFirstAndLast = __bind(this.setupFirstAndLast, this);
       this.addClassesToElement = __bind(this.addClassesToElement, this);
       this.handlePaste = __bind(this.handlePaste, this);
-      this.handleArrowForKeyDown = __bind(this.handleArrowForKeyDown, this);
-      this.handleArrow = __bind(this.handleArrow, this);
+      this.handleArrowForKeyUp = __bind(this.handleArrowForKeyUp, this);
       this.handleMouseUp = __bind(this.handleMouseUp, this);
       this.selection = __bind(this.selection, this);
       this.render = __bind(this.render, this);
@@ -474,21 +474,17 @@
       "mouseup": "handleMouseUp",
       "keydown": "handleKeyDown",
       "keyup": "handleKeyUp",
+      "keypress": "handleKeyPress",
       "paste": "handlePaste",
       "dblclick": "handleDblclick",
       "dragstart": "handleDrag",
       "drop": "handleDrag",
-      "click .graf--figure .aspectRatioPlaceholder": "handleGrafFigureSelectImg",
-      "click .graf--figure figcaption": "handleGrafFigureSelectCaption",
-      "mouseover .graf--figure.graf--iframe": "handleGrafFigureSelectIframe",
-      "mouseleave .graf--figure.graf--iframe": "handleGrafFigureUnSelectIframe",
-      "keyup .graf--figure figcaption": "handleGrafCaptionTyping",
       "mouseover .markup--anchor": "displayPopOver",
       "mouseout  .markup--anchor": "hidePopOver"
     };
 
     Editor.prototype.initialize = function(opts) {
-      var bodyplaceholder, embedplaceholder, extractplaceholder, title, titleplaceholder;
+      var bodyplaceholder, embedplaceholder, extractplaceholder, titleplaceholder;
       if (opts == null) {
         opts = {};
       }
@@ -499,30 +495,38 @@
       this.el = opts.el || "#editor";
       this.upload_url = opts.upload_url || "/uploads.json";
       this.upload_callback = opts.upload_callback;
-      this.oembed_url = opts.oembed_url || "http://api.embed.ly/1/oembed?url=";
-      this.extract_url = opts.extract_url || "http://api.embed.ly/1/extract?key=86c28a410a104c8bb58848733c82f840&url=";
+      this.image_delete_callback = opts.image_delete_callback;
+      this.image_caption_placeholder = opts.image_caption_placeholder || "Type caption for image (optional)";
+      this.oembed_url = opts.oembed_url || ("http://api.embed.ly/1/oembed?key=" + opts.api_key + "&url=");
+      this.extract_url = opts.extract_url || ("http://api.embed.ly/1/extract?key=" + opts.api_key + "&url=");
       this.default_loading_placeholder = opts.default_loading_placeholder || Dante.defaults.image_placeholder;
+      this.embed_caption_placeholder = opts.embed_caption_placeholder || "Type caption for embed (optional)";
       this.store_url = opts.store_url;
       this.store_method = opts.store_method || "POST";
+      this.store_success_handler = opts.store_success_handler;
       this.spell_check = opts.spellcheck || false;
       this.disable_title = opts.disable_title || false;
-      this.store_interval = opts.store_interval || 15000;
+      this.store_interval = opts.store_interval || 1500;
       this.paste_element_id = "#dante-paste-div";
       this.tooltip_class = opts.tooltip_class || Dante.Editor.Tooltip;
+      this.suggest_url = opts.suggest_url || "/api/suggest.json";
+      this.suggest_query_param = opts.suggest_query_param || "q";
+      this.suggest_query_timeout = opts.suggest_query_timeout || 300;
+      this.suggest_handler = opts.suggest_handler || null;
+      this.suggest_resource_handler = opts.suggest_resource_handler || null;
       opts.base_widgets || (opts.base_widgets = ["uploader", "embed", "embed_extract"]);
+      opts.base_behaviors || (opts.base_behaviors = ["save", "image", "paste", "list", "suggest"]);
+      opts.base_popovers || (opts.base_popovers = ["anchor", "typeahead", "card", "align"]);
       this.widgets = [];
+      this.behaviors = [];
+      this.popovers = [];
       window.debugMode = opts.debug || false;
       if (window.debugMode) {
         $(this.el).addClass("debug");
       }
-      if (localStorage.getItem('contenteditable')) {
-        $(this.el).html(localStorage.getItem('contenteditable'));
-      }
-      this.store();
       titleplaceholder = opts.title_placeholder || 'Title';
       this.title_placeholder = "<span class='defaultValue defaultValue--root'>" + titleplaceholder + "</span><br>";
-      title = opts.title || '';
-      this.title = title;
+      this.title = opts.title || '';
       bodyplaceholder = opts.body_placeholder || 'Tell your story…';
       this.body_placeholder = "<span class='defaultValue defaultValue--root'>" + bodyplaceholder + "</span><br>";
       embedplaceholder = opts.embed_placeholder || 'Paste a YouTube, Vine, Vimeo, or other video link, and press Enter';
@@ -530,6 +534,57 @@
       extractplaceholder = opts.extract_placeholder || "Paste a link to embed content from another site (e.g. Twitter) and press Enter";
       this.extract_placeholder = "<span class='defaultValue defaultValue--root'>" + extractplaceholder + "</span><br>";
       return this.initializeWidgets(opts);
+    };
+
+    Editor.prototype.initializeBehaviors = function(opts) {
+      var base_behaviors, self;
+      base_behaviors = opts.base_behaviors;
+      self = this;
+      if (base_behaviors.indexOf("suggest") >= 0) {
+        this.suggest_behavior = new Dante.View.Behavior.Suggest({
+          current_editor: this,
+          el: this.el
+        });
+        this.behaviors.push(this.suggest_behavior);
+      }
+      if (base_behaviors.indexOf("save") >= 0) {
+        this.save_behavior = new Dante.View.Behavior.Save({
+          current_editor: this,
+          el: this.el
+        });
+        this.behaviors.push(this.save_behavior);
+      }
+      if (base_behaviors.indexOf("paste") >= 0) {
+        this.paste_behavior = new Dante.View.Behavior.Paste({
+          current_editor: this,
+          el: this.el
+        });
+        this.behaviors.push(this.paste_behavior);
+      }
+      if (base_behaviors.indexOf("image") >= 0) {
+        this.image_behavior = new Dante.View.Behavior.Image({
+          current_editor: this,
+          el: this.el
+        });
+        this.behaviors.push(this.image_behavior);
+      }
+      if (base_behaviors.indexOf("list") >= 0) {
+        this.list_behavior = new Dante.View.Behavior.List({
+          current_editor: this,
+          el: this.el
+        });
+        this.behaviors.push(this.list_behavior);
+      }
+      if (opts.extra_behaviors) {
+        return _.each(opts.extra_behaviors, (function(_this) {
+          return function(w) {
+            if (!w.current_editor) {
+              w.current_editor = self;
+            }
+            return _this.behaviors.push(w);
+          };
+        })(this));
+      }
     };
 
     Editor.prototype.initializeWidgets = function(opts) {
@@ -566,41 +621,47 @@
       }
     };
 
-    Editor.prototype.store = function() {
-      if (!this.store_url) {
-        return;
-      }
-      return setTimeout((function(_this) {
-        return function() {
-          return _this.checkforStore();
-        };
-      })(this), this.store_interval);
-    };
-
-    Editor.prototype.checkforStore = function() {
-      if (this.content === this.getContent()) {
-        utils.log("content not changed skip store");
-        return this.store();
-      } else {
-        utils.log("content changed! update");
-        this.content = this.getContent();
-        return $.ajax({
-          url: this.store_url,
-          method: this.store_method,
-          data: {
-            body: this.getContent()
-          },
-          success: function(res) {
-            utils.log("store!");
-            return utils.log(res);
-          },
-          complete: (function(_this) {
-            return function(jxhr) {
-              return _this.store();
-            };
-          })(this)
+    Editor.prototype.intializePopOvers = function(opts) {
+      var base_popovers, self;
+      base_popovers = opts.base_popovers;
+      self = this;
+      if (base_popovers.indexOf("anchor") >= 0) {
+        this.pop_over = new Dante.Editor.PopOver({
+          editor: this
         });
+        this.pop_over.render().hide();
       }
+      if (base_popovers.indexOf("typeahead") >= 0) {
+        this.pop_over_typeahead = new Dante.Editor.PopOverTypeAhead({
+          editor: this
+        });
+        this.popovers.push(this.pop_over_typeahead);
+      }
+      if (base_popovers.indexOf("card") >= 0) {
+        this.pop_over_card = new Dante.Editor.PopOverCard({
+          editor: this
+        });
+        this.popovers.push(this.pop_over_card);
+      }
+      if (base_popovers.indexOf("align") >= 0) {
+        this.pop_over_align = new Dante.Editor.ImageTooltip({
+          editor: this
+        });
+        this.popovers.push(this.pop_over_align);
+      }
+      if (opts.extra_popovers) {
+        _.each(opts.extra_popovers, (function(_this) {
+          return function(w) {
+            if (!w.current_editor) {
+              w.current_editor = self;
+            }
+            return _this.popovers.push(w);
+          };
+        })(this));
+      }
+      return this.popovers.forEach(function(p) {
+        return p.render().hide();
+      });
     };
 
     Editor.prototype.getContent = function() {
@@ -629,10 +690,7 @@
         editor: this,
         widgets: this.widgets
       });
-      this.pop_over = new Dante.Editor.PopOver({
-        editor: this
-      });
-      this.pop_over.render().hide();
+      this.intializePopOvers(this.editor_options);
       return this.tooltip_view.render().hide();
     };
 
@@ -650,7 +708,8 @@
       if (!_.isEmpty(this.initial_html.trim())) {
         this.appendInitialContent();
       }
-      return this.parseInitialMess();
+      this.parseInitialMess();
+      return this.initializeBehaviors(this.editor_options);
     };
 
     Editor.prototype.restart = function() {
@@ -680,6 +739,19 @@
         return selection = window.getSelection();
       } else if (document.selection && document.selection.type !== "Control") {
         return selection = document.selection;
+      }
+    };
+
+    Editor.prototype.getSelectionStart = function() {
+      var node;
+      node = document.getSelection().anchorNode;
+      if (node === null) {
+        return;
+      }
+      if (node.nodeType === 3) {
+        return node.parentNode;
+      } else {
+        return node;
       }
     };
 
@@ -835,14 +907,6 @@
       return false;
     };
 
-    Editor.prototype.handleGrafCaptionTyping = function(ev) {
-      if (_.isEmpty(utils.getNode().textContent.trim())) {
-        return $(this.getNode()).addClass("is-defaultValue");
-      } else {
-        return $(this.getNode()).removeClass("is-defaultValue");
-      }
-    };
-
     Editor.prototype.handleTextSelection = function(anchor_node) {
       var text;
       this.editor_menu.hide();
@@ -882,40 +946,6 @@
       return this.pop_over.hide(ev);
     };
 
-    Editor.prototype.handleGrafFigureSelectImg = function(ev) {
-      var element;
-      utils.log("FIGURE SELECT");
-      element = ev.currentTarget;
-      this.markAsSelected(element);
-      $(element).parent(".graf--figure").addClass("is-selected is-mediaFocused");
-      return this.selection().removeAllRanges();
-    };
-
-    Editor.prototype.handleGrafFigureSelectIframe = function(ev) {
-      var element;
-      utils.log("FIGURE IFRAME SELECT");
-      element = ev.currentTarget;
-      this.iframeSelected = element;
-      this.markAsSelected(element);
-      $(element).addClass("is-selected is-mediaFocused");
-      return this.selection().removeAllRanges();
-    };
-
-    Editor.prototype.handleGrafFigureUnSelectIframe = function(ev) {
-      var element;
-      utils.log("FIGURE IFRAME UNSELECT");
-      element = ev.currentTarget;
-      this.iframeSelected = null;
-      return $(element).removeClass("is-selected is-mediaFocused");
-    };
-
-    Editor.prototype.handleGrafFigureSelectCaption = function(ev) {
-      var element;
-      utils.log("FIGCAPTION");
-      element = ev.currentTarget;
-      return $(element).parent(".graf--figure").removeClass("is-mediaFocused");
-    };
-
     Editor.prototype.handleMouseUp = function(ev) {
       var anchor_node;
       utils.log("MOUSE UP");
@@ -941,107 +971,12 @@
       }, 20);
     };
 
-    Editor.prototype.handleArrow = function(ev) {
+    Editor.prototype.handleArrowForKeyUp = function(ev) {
       var current_node;
       current_node = $(this.getNode());
       if (current_node.length > 0) {
         this.markAsSelected(current_node);
         return this.displayTooltipAt(current_node);
-      }
-    };
-
-    Editor.prototype.handleArrowForKeyDown = function(ev) {
-      var caret_node, current_node, ev_type, n, next_node, num, prev_node;
-      caret_node = this.getNode();
-      current_node = $(caret_node);
-      utils.log(ev);
-      ev_type = ev.originalEvent.key || ev.originalEvent.keyIdentifier;
-      utils.log("ENTER ARROW for key " + ev_type);
-      switch (ev_type) {
-        case "Down":
-          if (_.isUndefined(current_node) || !current_node.exists()) {
-            if ($(".is-selected").exists()) {
-              current_node = $(".is-selected");
-            }
-          }
-          next_node = current_node.next();
-          utils.log("NEXT NODE IS " + (next_node.attr('class')));
-          utils.log("CURRENT NODE IS " + (current_node.attr('class')));
-          if (!$(current_node).hasClass("graf")) {
-            return;
-          }
-          if (!(current_node.hasClass("graf--figure") || $(current_node).editableCaretOnLastLine())) {
-            return;
-          }
-          utils.log("ENTER ARROW PASSED RETURNS");
-          if (next_node.hasClass("graf--figure") && caret_node) {
-            n = next_node.find(".imageCaption");
-            this.scrollTo(n);
-            utils.log("1 down");
-            utils.log(n[0]);
-            this.skip_keyup = true;
-            this.selection().removeAllRanges();
-            this.markAsSelected(next_node);
-            next_node.addClass("is-mediaFocused is-selected");
-            return false;
-          } else if (next_node.hasClass("graf--mixtapeEmbed")) {
-            n = current_node.next(".graf--mixtapeEmbed");
-            num = n[0].childNodes.length;
-            this.setRangeAt(n[0], num);
-            this.scrollTo(n);
-            utils.log("2 down");
-            return false;
-          }
-          if (current_node.hasClass("graf--figure") && next_node.hasClass("graf")) {
-            this.scrollTo(next_node);
-            utils.log("3 down, from figure to next graf");
-            this.markAsSelected(next_node);
-            this.setRangeAt(next_node[0]);
-            return false;
-          }
-          break;
-        case "Up":
-          prev_node = current_node.prev();
-          utils.log("PREV NODE IS " + (prev_node.attr('class')) + " " + (prev_node.attr('name')));
-          utils.log("CURRENT NODE IS up " + (current_node.attr('class')));
-          if (!$(current_node).hasClass("graf")) {
-            return;
-          }
-          if (!$(current_node).editableCaretOnFirstLine()) {
-            return;
-          }
-          utils.log("ENTER ARROW PASSED RETURNS");
-          if (prev_node.hasClass("graf--figure")) {
-            utils.log("1 up");
-            n = prev_node.find(".imageCaption");
-            this.scrollTo(n);
-            this.skip_keyup = true;
-            this.selection().removeAllRanges();
-            this.markAsSelected(prev_node);
-            prev_node.addClass("is-mediaFocused");
-            return false;
-          } else if (prev_node.hasClass("graf--mixtapeEmbed")) {
-            n = current_node.prev(".graf--mixtapeEmbed");
-            num = n[0].childNodes.length;
-            this.setRangeAt(n[0], num);
-            this.scrollTo(n);
-            utils.log("2 up");
-            return false;
-          }
-          if (current_node.hasClass("graf--figure") && prev_node.hasClass("graf")) {
-            this.setRangeAt(prev_node[0]);
-            this.scrollTo(prev_node);
-            utils.log("3 up");
-            return false;
-          } else if (prev_node.hasClass("graf")) {
-            n = current_node.prev(".graf");
-            num = n[0].childNodes.length;
-            this.scrollTo(n);
-            utils.log("4 up");
-            this.skip_keyup = true;
-            this.markAsSelected(prev_node);
-            return false;
-          }
       }
     };
 
@@ -1063,42 +998,19 @@
       return false;
     };
 
-    Editor.prototype.handlePaste = function(ev) {
-      var cbd, pastedText;
-      utils.log("pasted!");
-      this.aa = this.getNode();
-      pastedText = void 0;
-      if (window.clipboardData && window.clipboardData.getData) {
-        pastedText = window.clipboardData.getData('Text');
-      } else if (ev.originalEvent.clipboardData && ev.originalEvent.clipboardData.getData) {
-        cbd = ev.originalEvent.clipboardData;
-        pastedText = _.isEmpty(cbd.getData('text/html')) ? cbd.getData('text/plain') : cbd.getData('text/html');
-      }
-      utils.log("Process and handle text...");
-      if (pastedText.match(/<\/*[a-z][^>]+?>/gi)) {
-        utils.log("HTML DETECTED ON PASTE");
-        pastedText = pastedText.replace(/&.*;/g, "");
-        pastedText = pastedText.replace(/<div>([\w\W]*?)<\/div>/gi, '<p>$1</p>');
-        document.body.appendChild($("<div id='" + (this.paste_element_id.replace('#', '')) + "' class='dante-paste'></div>")[0]);
-        $(this.paste_element_id).html("<span>" + pastedText + "</span>");
-        this.setupElementsClasses($(this.paste_element_id), (function(_this) {
-          return function(e) {
-            var last_node, new_node, nodes, num, top;
-            nodes = $(e.html()).insertAfter($(_this.aa));
-            e.remove();
-            last_node = nodes.last()[0];
-            num = last_node.childNodes.length;
-            _this.setRangeAt(last_node, num);
-            new_node = $(_this.getNode());
-            _this.markAsSelected(new_node);
-            _this.displayTooltipAt($(_this.el).find(".is-selected"));
-            _this.handleUnwrappedImages(nodes);
-            top = new_node.offset().top;
-            return $('html, body').animate({
-              scrollTop: top
-            }, 20);
-          };
-        })(this));
+    Editor.prototype.handlePaste = function(e) {
+      var parent;
+      this["continue"] = true;
+      utils.log("HANDLING PASTE");
+      parent = this.getNode();
+      _.each(this.behaviors, (function(_this) {
+        return function(b) {
+          if (b.handlePaste) {
+            return b.handlePaste(e, parent);
+          }
+        };
+      })(this));
+      if (!this["continue"]) {
         return false;
       }
     };
@@ -1171,7 +1083,7 @@
         } else if (!prev) {
           this.setRangeAt(this.$el.find(".section-inner p")[0]);
         }
-        return this.displayTooltipAt($(this.el).find(".is-selected"));
+        return this.displayTooltipAt(this.findSelected());
       }
     };
 
@@ -1212,29 +1124,23 @@
     };
 
     Editor.prototype.handleKeyDown = function(e) {
-      var anchor_node, eventHandled, li, parent, utils_anchor_node;
+      var anchor_node, eventHandled, parent, utils_anchor_node;
       utils.log("KEYDOWN");
+      this["continue"] = true;
       anchor_node = this.getNode();
       parent = $(anchor_node);
       if (anchor_node) {
         this.markAsSelected(anchor_node);
       }
+      utils.log("HANDLING Behavior KEYDOWN");
       if (e.which === TAB) {
         this.handleTab(anchor_node);
         return false;
       }
       if (e.which === ENTER) {
-        $(this.el).find(".is-selected").removeClass("is-selected");
+        this.findSelected().removeClass("is-selected");
         utils.log(this.isLastChar());
-        if (parent.hasClass("graf--p")) {
-          li = this.handleSmartList(parent, e);
-          if (li) {
-            anchor_node = li;
-          }
-        } else if (parent.hasClass("graf--li")) {
-          this.handleListLineBreak(parent, e);
-        }
-        utils.log("HANDLING WIDGET KEYDOWNS");
+        utils.log("HANDLING WIDGET ENTER");
         _.each(this.widgets, (function(_this) {
           return function(w) {
             if (w.handleEnterKey) {
@@ -1251,8 +1157,8 @@
         if (parent.hasClass("graf--iframe") || parent.hasClass("graf--figure")) {
           if (this.isLastChar()) {
             this.handleLineBreakWith("p", parent);
-            this.setRangeAtText($(".is-selected")[0]);
-            $(".is-selected").trigger("mouseup");
+            this.setRangeAtText(this.findSelected()[0]);
+            this.findSelected().trigger("mouseup");
             return false;
           } else {
             return false;
@@ -1285,7 +1191,7 @@
               });
               $(node).append("<br>");
             }
-            return _this.displayTooltipAt($(_this.el).find(".is-selected"));
+            return _this.displayTooltipAt(_this.findSelected());
           };
         })(this), 2);
       }
@@ -1318,16 +1224,6 @@
           utils.log("SCAPE FROM BACKSPACE HANDLER");
           return false;
         }
-        if (parent.hasClass("graf--li") && this.getCharacterPrecedingCaret().length === 0) {
-          return this.handleListBackspace(parent, e);
-        }
-        if ($(anchor_node).hasClass("graf--p") && this.isFirstChar()) {
-          if ($(anchor_node).prev().hasClass("graf--figure") && this.getSelectedText().length === 0) {
-            e.preventDefault();
-            $(anchor_node).prev().find("img").click();
-            utils.log("Focus on the previous image");
-          }
-        }
         if ($(utils_anchor_node).hasClass("section-content") || $(utils_anchor_node).hasClass("graf--first")) {
           utils.log("SECTION DETECTED FROM KEYDOWN " + (_.isEmpty($(utils_anchor_node).text())));
           if (_.isEmpty($(utils_anchor_node).text())) {
@@ -1337,31 +1233,6 @@
         if (anchor_node && anchor_node.nodeType === 3) {
           utils.log("TextNode detected from Down!");
         }
-        if ($(anchor_node).hasClass("graf--mixtapeEmbed") || $(anchor_node).hasClass("graf--iframe")) {
-          if (_.isEmpty($(anchor_node).text().trim() || this.isFirstChar())) {
-            utils.log("Check for inmediate deletion on empty embed text");
-            this.inmediateDeletion = this.isSelectingAll(anchor_node);
-            if (this.inmediateDeletion) {
-              this.handleInmediateDeletion($(anchor_node));
-            }
-            return false;
-          }
-        }
-        if ($(anchor_node).prev().hasClass("graf--mixtapeEmbed")) {
-          if (this.isFirstChar() && !_.isEmpty($(anchor_node).text().trim())) {
-            return false;
-          }
-        }
-      }
-      if (e.which === SPACEBAR) {
-        utils.log("SPACEBAR");
-        if (parent.hasClass("graf--p")) {
-          this.handleSmartList(parent, e);
-        }
-      }
-      if (_.contains([UPARROW, DOWNARROW], e.which)) {
-        utils.log(e.which);
-        this.handleArrowForKeyDown(e);
       }
       if (anchor_node) {
         if (!_.isEmpty($(anchor_node).text())) {
@@ -1369,31 +1240,32 @@
           $(anchor_node).removeClass("graf--empty");
         }
       }
-      if (_.isUndefined(anchor_node) && $(".is-selected").hasClass("is-mediaFocused")) {
-        this.setRangeAt($(".is-selected").find("figcaption")[0]);
-        $(".is-selected").removeClass("is-mediaFocused");
+      _.each(this.behaviors, (function(_this) {
+        return function(b) {
+          if (b.handleKeyDown) {
+            return b.handleKeyDown(e, parent);
+          }
+        };
+      })(this));
+      if (!this["continue"]) {
         return false;
       }
     };
 
     Editor.prototype.handleKeyUp = function(e, node) {
       var anchor_node, next_graf, utils_anchor_node;
+      this["continue"] = true;
       if (this.skip_keyup) {
         this.skip_keyup = null;
         utils.log("SKIP KEYUP");
         return false;
       }
-      utils.log("KEYUP");
+      utils.log("ENTER KEYUP");
       this.editor_menu.hide();
       this.reachedTop = false;
       anchor_node = this.getNode();
       utils_anchor_node = utils.getNode();
       this.handleTextSelection(anchor_node);
-      if (_.contains([BACKSPACE, SPACEBAR, ENTER], e.which)) {
-        if ($(anchor_node).hasClass("graf--li")) {
-          this.removeSpanTag($(anchor_node));
-        }
-      }
       if (e.which === BACKSPACE) {
         if ($(utils_anchor_node).hasClass("postField--body")) {
           utils.log("ALL GONE from UP");
@@ -1431,8 +1303,34 @@
         }
       }
       if (_.contains([LEFTARROW, UPARROW, RIGHTARROW, DOWNARROW], e.which)) {
-        return this.handleArrow(e);
+        this.handleArrowForKeyUp(e);
       }
+      utils.log("HANDLING Behavior KEYUPS");
+      _.each(this.behaviors, (function(_this) {
+        return function(b) {
+          if (b.handleKeyUp) {
+            return b.handleKeyUp(e);
+          }
+        };
+      })(this));
+      if (!this["continue"]) {
+        return false;
+      }
+    };
+
+    Editor.prototype.handleKeyPress = function(e, node) {
+      var anchor_node, parent;
+      anchor_node = this.getNode();
+      parent = $(anchor_node);
+      this.hidePlaceholder(parent);
+      utils.log("HANDLING Behavior KEYPRESS");
+      return _.each(this.behaviors, (function(_this) {
+        return function(b) {
+          if (b.handleKeyPress) {
+            return b.handleKeyPress(e, parent);
+          }
+        };
+      })(this));
     };
 
     Editor.prototype.handleLineBreakWith = function(element_type, from_element) {
@@ -1472,13 +1370,12 @@
     };
 
     Editor.prototype.markAsSelected = function(element) {
-      utils.log(element);
+      utils.log("MARK AS SELECTED");
       if (_.isUndefined(element)) {
         return;
       }
-      $(this.el).find(".is-selected").removeClass("is-mediaFocused is-selected");
+      this.findSelected().removeClass("is-mediaFocused is-selected");
       $(element).addClass("is-selected");
-      $(element).find(".defaultValue").remove();
       if ($(element).hasClass("graf--first")) {
         this.reachedTop = true;
         if ($(element).find("br").length === 0) {
@@ -1583,8 +1480,6 @@
 
     Editor.prototype.cleanContents = function(element) {
       var paste_div, s;
-      utils.log("ti");
-      utils.log(element);
       if (_.isUndefined(element)) {
         element = $(this.el).find('.section-inner');
       } else {
@@ -1595,7 +1490,7 @@
         elements: ['strong', 'img', 'em', 'br', 'a', 'blockquote', 'b', 'u', 'i', 'pre', 'p', 'h1', 'h2', 'h3', 'h4', 'ul', 'ol', 'li'],
         attributes: {
           '__ALL__': ['class'],
-          a: ['href', 'title', 'target'],
+          a: ['href', 'title', 'target', 'data-id', 'data-type', 'data-href', 'data-avatar'],
           img: ['src']
         },
         protocols: {
@@ -1701,9 +1596,11 @@
     Editor.prototype.setupLink = function(n) {
       var href, parent_name;
       parent_name = $(n).parent().prop("tagName").toLowerCase();
-      $(n).addClass("markup--anchor markup--" + parent_name + "-anchor");
-      href = $(n).attr("href");
-      return $(n).attr("data-href", href);
+      if ($(n).data("type") !== "user") {
+        $(n).addClass("markup--anchor markup--" + parent_name + "-anchor");
+        href = $(n).attr("href");
+        return $(n).attr("data-href", href);
+      }
     };
 
     Editor.prototype.preCleanNode = function(element) {
@@ -1727,7 +1624,7 @@
     Editor.prototype.setupFirstAndLast = function() {
       var childs;
       childs = $(this.el).find(".section-inner").children();
-      childs.removeClass("graf--last , graf--first");
+      childs.removeClass("graf--last, graf--first");
       childs.first().addClass("graf--first");
       return childs.last().addClass("graf--last");
     };
@@ -1747,10 +1644,506 @@
       return $(element).attr("name", utils.generateUniqueName());
     };
 
-    Editor.prototype.listify = function($paragraph, listType, regex) {
+    Editor.prototype.removeSpanTag = function($item) {
+      var $spans, span, _i, _len;
+      $spans = $item.find("span");
+      for (_i = 0, _len = $spans.length; _i < _len; _i++) {
+        span = $spans[_i];
+        if (!$(span).hasClass("defaultValue")) {
+          $(span).replaceWith($(span).html());
+        }
+      }
+      return $item;
+    };
+
+    Editor.prototype.findSelected = function() {
+      return $(this.el).find(".is-selected");
+    };
+
+    return Editor;
+
+  })(Dante.View);
+
+}).call(this);
+(function() {
+  var __bind = function(fn, me){ return function(){ return fn.apply(me, arguments); }; },
+    __hasProp = {}.hasOwnProperty,
+    __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; };
+
+  Dante.Article = (function(_super) {
+    __extends(Article, _super);
+
+    function Article() {
+      this.start = __bind(this.start, this);
+      return Article.__super__.constructor.apply(this, arguments);
+    }
+
+    Article.prototype.el = "body";
+
+    Article.prototype.events = {
+      "mouseover .markup--anchor": "displayPopOver",
+      "mouseout  .markup--anchor": "hidePopOver"
+    };
+
+    Article.prototype.initialize = function(opts) {
+      if (opts == null) {
+        opts = {};
+      }
+      this.options = opts;
+      this.popovers = [];
+      return opts.base_popovers || (opts.base_popovers = ["anchor", "card"]);
+    };
+
+    Article.prototype.start = function() {
+      this.render();
+      return this.appendMenus();
+    };
+
+    Article.prototype.appendMenus = function() {
+      this.intializePopOvers(this.options);
+      return this.removeEditables();
+    };
+
+    Article.prototype.render = function() {};
+
+    Article.prototype.removeEditables = function() {
+      return $(this.el).find("[contenteditable]").removeAttr("contenteditable");
+    };
+
+    Article.prototype.intializePopOvers = function(opts) {
+      var base_popovers, self;
+      base_popovers = opts.base_popovers;
+      self = this;
+      if (base_popovers.indexOf("anchor") >= 0) {
+        this.pop_over = new Dante.Editor.PopOver({
+          editor: this
+        });
+        this.popovers.push(this.pop_over);
+      }
+      if (base_popovers.indexOf("card") >= 0) {
+        this.pop_over_card = new Dante.Editor.PopOverCard({
+          editor: this
+        });
+        this.popovers.push(this.pop_over_card);
+      }
+      if (opts.extra_popovers) {
+        _.each(opts.extra_popovers, (function(_this) {
+          return function(w) {
+            if (!w.current_editor) {
+              w.current_editor = self;
+            }
+            return _this.popovers.push(w);
+          };
+        })(this));
+      }
+      return this.popovers.forEach(function(p) {
+        return p.render().hide();
+      });
+    };
+
+    Article.prototype.displayPopOver = function(ev) {
+      return this.pop_over.displayAt(ev);
+    };
+
+    Article.prototype.hidePopOver = function(ev) {
+      return this.pop_over.hide(ev);
+    };
+
+    return Article;
+
+  })(Dante.View);
+
+}).call(this);
+(function() {
+  var __hasProp = {}.hasOwnProperty,
+    __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; };
+
+  Dante.View.Behavior = (function(_super) {
+    __extends(Behavior, _super);
+
+    function Behavior() {
+      return Behavior.__super__.constructor.apply(this, arguments);
+    }
+
+    return Behavior;
+
+  })(Dante.View);
+
+}).call(this);
+(function() {
+  var utils,
+    __bind = function(fn, me){ return function(){ return fn.apply(me, arguments); }; },
+    __hasProp = {}.hasOwnProperty,
+    __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; };
+
+  utils = Dante.utils;
+
+  Dante.View.Behavior.Image = (function(_super) {
+    var BACKSPACE, DOWNARROW, ENTER, LEFTARROW, RIGHTARROW, SPACEBAR, TAB, UPARROW;
+
+    __extends(Image, _super);
+
+    function Image() {
+      this.handleArrowForKeyUp = __bind(this.handleArrowForKeyUp, this);
+      this.handleArrowForKeyDown = __bind(this.handleArrowForKeyDown, this);
+      return Image.__super__.constructor.apply(this, arguments);
+    }
+
+    BACKSPACE = 8;
+
+    TAB = 9;
+
+    ENTER = 13;
+
+    SPACEBAR = 32;
+
+    LEFTARROW = 37;
+
+    UPARROW = 38;
+
+    RIGHTARROW = 39;
+
+    DOWNARROW = 40;
+
+    Image.prototype.events = {
+      "click .graf--figure .aspectRatioPlaceholder": "handleGrafFigureSelectImg",
+      "click .graf--figure figcaption": "handleGrafFigureSelectCaption",
+      "keyup .graf--figure figcaption": "handleGrafCaptionTyping",
+      "mouseover .graf--figure.graf--iframe": "handleGrafFigureSelectIframe",
+      "mouseleave .graf--figure.graf--iframe": "handleGrafFigureUnSelectIframe"
+    };
+
+    Image.prototype.initialize = function(opts) {
+      if (opts == null) {
+        opts = {};
+      }
+      return this.editor = opts.current_editor;
+    };
+
+    Image.prototype.handleGrafFigureSelectImg = function(ev) {
+      var element;
+      utils.log("FIGURE SELECT");
+      element = ev.currentTarget;
+      this.editor.markAsSelected(element);
+      $(element).parent(".graf--figure").addClass("is-selected is-mediaFocused");
+      this.editor.selection().removeAllRanges();
+      return this.showAlignPopover(ev);
+    };
+
+    Image.prototype.showAlignPopover = function(ev) {
+      var target;
+      target = $(ev.currentTarget);
+      return this.editor.pop_over_align.positionPopOver(target);
+    };
+
+    Image.prototype.placeHolderDiv = function(target) {
+      return target.find(".aspectRatioPlaceholder");
+    };
+
+    Image.prototype.handleGrafFigureSelectCaption = function(ev) {
+      var element;
+      utils.log("FIGCAPTION");
+      element = ev.currentTarget;
+      $(element).parent(".graf--figure").removeClass("is-mediaFocused");
+      return this.editor.pop_over_align.hide();
+    };
+
+    Image.prototype.handleGrafCaptionTyping = function(ev) {
+      var node;
+      this.editor.pop_over_align.hide();
+      node = $(this.editor.getNode());
+      if (_.isEmpty(utils.getNode().textContent.trim())) {
+        return $(node).addClass("is-defaultValue");
+      } else {
+        return $(node).removeClass("is-defaultValue");
+      }
+    };
+
+    Image.prototype.handleGrafFigureSelectIframe = function(ev) {
+      var element;
+      utils.log("FIGURE IFRAME SELECT");
+      element = ev.currentTarget;
+      this.iframeSelected = element;
+      this.editor.markAsSelected(element);
+      $(element).addClass("is-selected is-mediaFocused");
+      return this.editor.selection().removeAllRanges();
+    };
+
+    Image.prototype.handleGrafFigureUnSelectIframe = function(ev) {
+      var element;
+      utils.log("FIGURE IFRAME UNSELECT");
+      element = ev.currentTarget;
+      this.iframeSelected = null;
+      return $(element).removeClass("is-selected is-mediaFocused");
+    };
+
+    Image.prototype.handleKeyDown = function(e, parent) {
+      var node;
+      if (_.contains([UPARROW, DOWNARROW], e.which)) {
+        utils.log(e.which);
+        this.handleArrowForKeyDown(e);
+      }
+      if (e.which === BACKSPACE) {
+        if ($(e.target).hasClass("graf--figure")) {
+          e.preventDefault();
+          if (this.editor.image_delete_callback) {
+            this.editor.image_delete_callback(this.editor.findSelected().find("img").data());
+          }
+          utils.log("Replacing selected node");
+          this.editor.replaceWith("p", this.editor.findSelected());
+          this.editor.setRangeAt(this.editor.findSelected()[0]);
+          this.editor.pop_over_align.hide();
+          utils.log("Focus on the previous graf");
+          this.editor["continue"] = false;
+          return false;
+        }
+        if (parent.hasClass("graf--p") && this.editor.isFirstChar()) {
+          if (parent.prev().hasClass("graf--figure") && this.editor.getSelectedText().length === 0) {
+            e.preventDefault();
+            parent.prev().find("img").click();
+            this.editor.pop_over_align.positionPopOver(parent.prev());
+            utils.log("Focus on the previous image");
+            this.editor["continue"] = false;
+            return false;
+          }
+        }
+        if (parent.hasClass("graf--mixtapeEmbed") || parent.hasClass("graf--iframe")) {
+          if (_.isEmpty(parent.text().trim() || this.isFirstChar())) {
+            utils.log("Check for inmediate deletion on empty embed text");
+            this.editor.inmediateDeletion = this.editor.isSelectingAll(anchor_node);
+            if (this.editor.inmediateDeletion) {
+              this.editor.handleInmediateDeletion(parent);
+            }
+            e.preventDefault();
+            this.editor["continue"] = false;
+            return false;
+          }
+        }
+        if (parent.prev().hasClass("graf--mixtapeEmbed")) {
+          if (this.editor.isFirstChar() && !_.isEmpty(parent.text().trim())) {
+            this.editor["continue"] = false;
+            return false;
+          }
+        }
+      }
+      if (_.isUndefined(parent) || parent.length === 0 && this.editor.findSelected().hasClass("is-mediaFocused")) {
+        node = this.editor.findSelected().find("figcaption");
+        node.find(".defaultValue").remove();
+        this.editor.setRangeAt(node[0]);
+        this.editor.findSelected().removeClass("is-mediaFocused");
+        this.editor.pop_over_align.hide();
+        return false;
+      }
+    };
+
+    Image.prototype.handleArrowForKeyDown = function(ev) {
+      var caret_node, current_node, ev_type, n, next_node, num, prev_node;
+      caret_node = this.editor.getNode();
+      current_node = $(caret_node);
+      utils.log(ev);
+      ev_type = ev.originalEvent.key || ev.originalEvent.keyIdentifier;
+      utils.log("ENTER ARROW for key " + ev_type);
+      switch (ev_type) {
+        case "ArrowDown":
+        case "Down":
+          if (_.isUndefined(current_node) || !current_node.exists()) {
+            if (this.editor.findSelected().exists()) {
+              current_node = this.editor.findSelected();
+            }
+          }
+          next_node = current_node.next();
+          utils.log("NEXT NODE IS " + (next_node.attr('class')));
+          utils.log("CURRENT NODE IS " + (current_node.attr('class')));
+          if (!$(current_node).hasClass("graf")) {
+            return;
+          }
+          if (!(current_node.hasClass("graf--figure") || $(current_node).editableCaretOnLastLine())) {
+            return;
+          }
+          utils.log("ENTER ARROW PASSED RETURNS");
+          if (next_node.hasClass("graf--figure") && caret_node) {
+            n = next_node.find(".imageCaption");
+            this.editor.scrollTo(n);
+            utils.log("1 down");
+            utils.log(n[0]);
+            this.editor.skip_keyup = true;
+            this.editor.selection().removeAllRanges();
+            this.editor.markAsSelected(next_node);
+            next_node.addClass("is-mediaFocused is-selected");
+            this.editor.pop_over_align.positionPopOver(this.placeHolderDiv(next_node));
+            this.editor["continue"] = false;
+            return false;
+          } else if (next_node.prev().hasClass("graf--figure")) {
+            this.editor.pop_over_align.hide();
+          } else if (next_node.hasClass("graf--mixtapeEmbed")) {
+            n = current_node.next(".graf--mixtapeEmbed");
+            num = n[0].childNodes.length;
+            this.editor.setRangeAt(n[0], num);
+            utils.log("2 down");
+            this.editor["continue"] = false;
+            return false;
+          }
+          if (current_node.hasClass("graf--figure") && next_node.hasClass("graf")) {
+            this.editor.scrollTo(next_node);
+            utils.log("3 down, from figure to next graf");
+            this.editor.skip_keyup = true;
+            this.editor.markAsSelected(next_node);
+            this.editor.setRangeAt(next_node[0]);
+            this.editor["continue"] = false;
+            return false;
+          }
+          break;
+        case "ArrowUp":
+        case "Up":
+          prev_node = current_node.prev();
+          utils.log("PREV NODE IS " + (prev_node.attr('class')) + " " + (prev_node.attr('name')));
+          utils.log("CURRENT NODE IS up " + (current_node.attr('class')));
+          if (prev_node.length === 0 && $(ev.target).hasClass("graf--figure")) {
+            n = $(ev.target).prev(".graf");
+            this.editor["continue"] = false;
+            this.editor.markAsSelected(n[0]);
+            this.editor.pop_over_align.hide();
+            return false;
+          } else if (prev_node.length > 0 && $(".graf--figure.is-mediaFocused").length > 0) {
+            n = $(".graf--figure.is-mediaFocused").prev(".graf");
+            this.editor["continue"] = false;
+            this.editor.markAsSelected(n[0]);
+            this.editor.pop_over_align.hide();
+            return false;
+          }
+          if (!$(current_node).hasClass("graf")) {
+            return;
+          }
+          if (!$(current_node).editableCaretOnFirstLine()) {
+            return;
+          }
+          utils.log("ENTER ARROW PASSED RETURNS");
+          if (prev_node.hasClass("graf--figure")) {
+            utils.log("1 up");
+            n = prev_node.find(".imageCaption");
+            this.editor.scrollTo(n);
+            this.editor.skip_keyup = true;
+            this.editor.selection().removeAllRanges();
+            this.editor.markAsSelected(prev_node);
+            prev_node.addClass("is-mediaFocused");
+            this.editor.pop_over_align.positionPopOver(this.placeHolderDiv(prev_node));
+            this.editor["continue"] = false;
+            return false;
+          } else if (prev_node.hasClass("graf--mixtapeEmbed")) {
+            n = current_node.prev(".graf--mixtapeEmbed");
+            num = n[0].childNodes.length;
+            this.editor.setRangeAt(n[0], num);
+            utils.log("2 up");
+            this.editor["continue"] = false;
+            return false;
+          }
+          if (current_node.hasClass("graf--figure") && prev_node.hasClass("graf")) {
+            this.editor.setRangeAt(prev_node[0]);
+            utils.log("3 up");
+            this.editor["continue"] = false;
+            return false;
+          } else if (prev_node.hasClass("graf")) {
+            n = current_node.prev(".graf");
+            num = n[0].childNodes.length;
+            utils.log("4 up");
+            this.editor.markAsSelected(prev_node);
+            return false;
+          }
+      }
+    };
+
+    Image.prototype.handleArrowForKeyUp = function(ev) {
+      var current_node;
+      current_node = $(this.editor.editor.getNode());
+      if (current_node.length > 0) {
+        this.editor.markAsSelected(current_node);
+        return this.editor.displayTooltipAt(current_node);
+      }
+    };
+
+    return Image;
+
+  })(Dante.View.Behavior);
+
+}).call(this);
+(function() {
+  var utils,
+    __hasProp = {}.hasOwnProperty,
+    __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; };
+
+  utils = Dante.utils;
+
+  Dante.View.Behavior.List = (function(_super) {
+    var BACKSPACE, DOWNARROW, ENTER, LEFTARROW, RIGHTARROW, SPACEBAR, TAB, UPARROW;
+
+    __extends(List, _super);
+
+    function List() {
+      return List.__super__.constructor.apply(this, arguments);
+    }
+
+    BACKSPACE = 8;
+
+    TAB = 9;
+
+    ENTER = 13;
+
+    SPACEBAR = 32;
+
+    LEFTARROW = 37;
+
+    UPARROW = 38;
+
+    RIGHTARROW = 39;
+
+    DOWNARROW = 40;
+
+    List.prototype.initialize = function(opts) {
+      if (opts == null) {
+        opts = {};
+      }
+      return this.editor = opts.current_editor;
+    };
+
+    List.prototype.handleKeyDown = function(e, parent) {
+      var anchor_node, li;
+      if (e.which === ENTER) {
+        if (parent.hasClass("graf--p")) {
+          li = this.handleSmartList(parent, e);
+          if (li) {
+            anchor_node = li;
+          }
+        } else if (parent.hasClass("graf--li")) {
+          this.handleListLineBreak(parent, e);
+        }
+      }
+      if (e.which === SPACEBAR) {
+        utils.log("SPACEBAR");
+        if (parent.hasClass("graf--p")) {
+          this.handleSmartList(parent, e);
+        }
+      }
+      if (e.which === BACKSPACE) {
+        if (parent.hasClass("graf--li") && this.editor.getCharacterPrecedingCaret().length === 0) {
+          return this.handleListBackspace(parent, e);
+        }
+      }
+    };
+
+    List.prototype.handleKeyUp = function(e) {
+      var anchor_node;
+      anchor_node = this.editor.getNode();
+      if (_.contains([BACKSPACE, SPACEBAR, ENTER], e.which)) {
+        if ($(anchor_node).hasClass("graf--li")) {
+          return this.editor.removeSpanTag($(anchor_node));
+        }
+      }
+    };
+
+    List.prototype.buildList = function($paragraph, listType, regex) {
       var $li, $list, content;
       utils.log("LISTIFY PARAGRAPH");
-      this.removeSpanTag($paragraph);
+      this.editor.removeSpanTag($paragraph);
       content = $paragraph.html().replace(/&nbsp;/g, " ").replace(regex, "");
       switch (listType) {
         case "ul":
@@ -1762,49 +2155,49 @@
         default:
           return false;
       }
-      this.addClassesToElement($list[0]);
-      this.replaceWith("li", $paragraph);
-      $li = $(".is-selected");
-      this.setElementName($li[0]);
+      this.editor.addClassesToElement($list[0]);
+      this.editor.replaceWith("li", $paragraph);
+      $li = this.editor.findSelected();
+      this.editor.setElementName($li[0]);
       $li.html(content).wrap($list);
       if ($li.find("br").length === 0) {
         $li.append("<br/>");
       }
-      this.setRangeAt($li[0]);
+      this.editor.setRangeAt($li[0]);
       return $li[0];
     };
 
-    Editor.prototype.handleSmartList = function($item, e) {
+    List.prototype.handleSmartList = function($item, e) {
       var $li, chars, match, regex;
       utils.log("HANDLE A SMART LIST");
-      chars = this.getCharacterPrecedingCaret();
+      chars = this.editor.getCharacterPrecedingCaret();
       match = chars.match(/^\s*(\-|\*)\s*$/);
       if (match) {
         utils.log("CREATING LIST ITEM");
         e.preventDefault();
         regex = new RegExp(/\s*(\-|\*)\s*/);
-        $li = this.listify($item, "ul", regex);
+        $li = this.buildList($item, "ul", regex);
       } else {
         match = chars.match(/^\s*1(\.|\))\s*$/);
         if (match) {
           utils.log("CREATING LIST ITEM");
           e.preventDefault();
           regex = new RegExp(/\s*1(\.|\))\s*/);
-          $li = this.listify($item, "ol", regex);
+          $li = this.buildList($item, "ol", regex);
         }
       }
       return $li;
     };
 
-    Editor.prototype.handleListLineBreak = function($li, e) {
+    List.prototype.handleListLineBreak = function($li, e) {
       var $list, $paragraph, content;
       utils.log("LIST LINE BREAK");
-      this.tooltip_view.hide();
+      this.editor.tooltip_view.hide();
       $list = $li.parent("ol, ul");
       $paragraph = $("<p></p>");
       utils.log($li.prev());
       if ($list.children().length === 1 && $li.text() === "") {
-        this.replaceWith("p", $list);
+        this.editor.replaceWith("p", $list);
       } else if ($li.text() === "" && ($li.next().length !== 0)) {
         e.preventDefault();
       } else if ($li.next().length === 0) {
@@ -1829,14 +2222,14 @@
       utils.log($li);
       if ($li.hasClass("graf--removed")) {
         utils.log("ELEMENT REMOVED");
-        this.addClassesToElement($paragraph[0]);
-        this.setRangeAt($paragraph[0]);
-        this.markAsSelected($paragraph[0]);
-        return this.scrollTo($paragraph);
+        this.editor.addClassesToElement($paragraph[0]);
+        this.editor.setRangeAt($paragraph[0]);
+        this.editor.markAsSelected($paragraph[0]);
+        return this.editor.scrollTo($paragraph);
       }
     };
 
-    Editor.prototype.handleListBackspace = function($li, e) {
+    List.prototype.handleListBackspace = function($li, e) {
       var $list, $paragraph, content;
       $list = $li.parent("ol, ul");
       utils.log("LIST BACKSPACE");
@@ -1844,31 +2237,332 @@
         e.preventDefault();
         $list.before($li);
         content = $li.html();
-        this.replaceWith("p", $li);
-        $paragraph = $(".is-selected");
+        this.editor.replaceWith("p", $li);
+        $paragraph = this.editor.findSelected();
         $paragraph.removeClass("graf--empty").html(content).attr("name", utils.generateUniqueName());
         if ($list.children().length === 0) {
           $list.remove();
         }
-        return this.setupFirstAndLast();
+        return this.editor.setupFirstAndLast();
       }
     };
 
-    Editor.prototype.removeSpanTag = function($item) {
-      var $spans, span, _i, _len;
-      $spans = $item.find("span");
-      for (_i = 0, _len = $spans.length; _i < _len; _i++) {
-        span = $spans[_i];
-        if (!$(span).hasClass("defaultValue")) {
-          $(span).replaceWith($(span).html());
+    return List;
+
+  })(Dante.View.Behavior);
+
+}).call(this);
+(function() {
+  var utils,
+    __bind = function(fn, me){ return function(){ return fn.apply(me, arguments); }; },
+    __hasProp = {}.hasOwnProperty,
+    __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; };
+
+  utils = Dante.utils;
+
+  Dante.View.Behavior.Paste = (function(_super) {
+    __extends(Paste, _super);
+
+    function Paste() {
+      this.handlePaste = __bind(this.handlePaste, this);
+      return Paste.__super__.constructor.apply(this, arguments);
+    }
+
+    Paste.prototype.initialize = function(opts) {
+      if (opts == null) {
+        opts = {};
+      }
+      return this.editor = opts.current_editor;
+    };
+
+    Paste.prototype.handlePaste = function(ev, parent) {
+      var cbd, nodes, paste_el, pastedText;
+      utils.log("pasted!");
+      this.editor.hidePlaceholder($(parent));
+      pastedText = void 0;
+      if (window.clipboardData && window.clipboardData.getData) {
+        pastedText = window.clipboardData.getData('Text');
+      } else if (ev.originalEvent.clipboardData && ev.originalEvent.clipboardData.getData) {
+        cbd = ev.originalEvent.clipboardData;
+        pastedText = _.isEmpty(cbd.getData('text/html')) ? cbd.getData('text/plain') : cbd.getData('text/html');
+      }
+      utils.log("Process and handle text...");
+      utils.log(pastedText);
+      if (pastedText.match(/<\/*[a-z][^>]+?>/gi)) {
+        utils.log("HTML DETECTED ON PASTE");
+        pastedText = pastedText.replace(/<div>([\w\W]*?)<\/div>/gi, '<p>$1</p>');
+        document.body.appendChild($("<div id='" + (this.editor.paste_element_id.replace('#', '')) + "' class='dante-paste'></div>")[0]);
+        paste_el = $(this.editor.paste_element_id);
+        paste_el.html("<span>" + pastedText + "</span>");
+        nodes = $(paste_el.html()).insertBefore($(parent));
+        this.editor.parseInitialMess();
+
+        /*
+        @editor.setupElementsClasses $(@editor.paste_element_id), (e)=>
+           * e is the target object which is cleaned
+          nodes = $(e.html()).insertAfter($(parent))
+           *remove paste div since we wont use it until the next paste
+          e.remove()
+           *set caret on newly created node
+          last_node = nodes.last()[0]
+          num = last_node.childNodes.length
+          @editor.setRangeAt(last_node, num)
+          
+           *select new node
+          new_node = $(@editor.getNode())
+          @editor.markAsSelected(new_node)
+          @editor.displayTooltipAt($(@editor.el).find(".is-selected"))
+          
+           * wrap new images
+          @editor.handleUnwrappedImages(nodes)
+        
+           *scroll to element top
+          top = new_node.offset().top
+          $('html, body').animate
+            scrollTop: top
+          , 20
+         */
+        this.editor["continue"] = false;
+        return false;
+      }
+    };
+
+    return Paste;
+
+  })(Dante.View.Behavior);
+
+}).call(this);
+(function() {
+  var utils,
+    __hasProp = {}.hasOwnProperty,
+    __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; };
+
+  utils = Dante.utils;
+
+  Dante.View.Behavior.Save = (function(_super) {
+    __extends(Save, _super);
+
+    function Save() {
+      return Save.__super__.constructor.apply(this, arguments);
+    }
+
+    Save.prototype.events = {
+      "input": "handleStore"
+    };
+
+    Save.prototype.initialize = function(opts) {
+      if (opts == null) {
+        opts = {};
+      }
+      this.actionEvent = opts.title;
+      this.editor = opts.current_editor;
+      return this.content = this.editor.getContent();
+    };
+
+    Save.prototype.handleStore = function(ev) {
+      return this.store();
+    };
+
+    Save.prototype.store = function() {
+      if (!this.editor.store_url) {
+        return;
+      }
+      utils.log("HANDLE DATA STORE");
+      clearTimeout(this.timeout);
+      return this.timeout = setTimeout((function(_this) {
+        return function() {
+          return _this.checkforStore();
+        };
+      })(this), this.editor.store_interval);
+    };
+
+    Save.prototype.checkforStore = function() {
+      utils.log("ENTER DATA STORE");
+      if (this.content === this.editor.getContent()) {
+        utils.log("content not changed skip store");
+        return this.store();
+      } else {
+        utils.log("content changed! update");
+        this.content = this.editor.getContent();
+        return $.ajax({
+          url: this.editor.store_url,
+          method: this.editor.store_method,
+          dataType: "json",
+          data: {
+            body: this.editor.getContent()
+          },
+          success: (function(_this) {
+            return function(res) {
+              utils.log("STORING CONTENT");
+              if (_this.editor.store_success_handler) {
+                return _this.editor.store_success_handler(res);
+              }
+            };
+          })(this)
+        });
+      }
+    };
+
+    return Save;
+
+  })(Dante.View.Behavior);
+
+}).call(this);
+(function() {
+  var utils,
+    __hasProp = {}.hasOwnProperty,
+    __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; };
+
+  utils = Dante.utils;
+
+  Dante.View.Behavior.Suggest = (function(_super) {
+    __extends(Suggest, _super);
+
+    function Suggest() {
+      return Suggest.__super__.constructor.apply(this, arguments);
+    }
+
+    Suggest.prototype.initialize = function(opts) {
+      if (opts == null) {
+        opts = {};
+      }
+      this.actionEvent = opts.title;
+      this.editor = opts.current_editor;
+      this._name = null;
+      return this.fetch_results = [];
+    };
+
+    Suggest.prototype.displayPopOver = function(ev) {
+      return this.editor.pop_over_typeahead.displayAt(this.editor.getSelectionStart());
+    };
+
+    Suggest.prototype.hidePopOver = function(ev) {
+      console.log("display popover from typeahead");
+      return this.editor.pop_over_typeahead.displayAt(ev);
+    };
+
+    Suggest.prototype.desintegratePopOver = function(e) {
+      $(this.editor.getSelectionStart()).remove();
+      return this.pasteHtmlAtCaret(this.editor.getSelectionStart().textContent, false);
+    };
+
+    Suggest.prototype.handleKeyPress = function(e) {
+      if (!this.insideQuery()) {
+        if (e.keyCode === 64) {
+          e.preventDefault();
+          return this.pasteHtmlAtCaret(this.wrapperTemplate("@"), false);
+        }
+      } else {
+        console.log("ok let's search");
+        return this.getResults((function(_this) {
+          return function(e) {
+            return _this.fetchResults(e);
+          };
+        })(this));
+      }
+    };
+
+    Suggest.prototype.handleKeyUp = function(e) {
+      if (this.insideQuery()) {
+        return this.fetchResults(e);
+      }
+    };
+
+    Suggest.prototype.fetchResults = function(e) {
+      if (this.getResults.length < 1) {
+        this.desintegratePopOver(e);
+      }
+      if (this.json_request) {
+        this.json_request.abort();
+      }
+      return this.getResults((function(_this) {
+        return function(e) {
+          _this.displayPopOver(e);
+          return _this.editor.pop_over_typeahead.appendData(_this.fetch_results);
+        };
+      })(this));
+    };
+
+    Suggest.prototype.getResults = function(cb, e) {
+      var q;
+      q = this.editor.getSelectionStart().textContent.replace("@", "");
+      clearTimeout(this.timeout);
+      return this.timeout = setTimeout((function(_this) {
+        return function() {
+          return _this.json_request = $.ajax({
+            url: "" + _this.editor.suggest_url + "?" + _this.editor.suggest_query_param + "=" + q,
+            method: "get",
+            dataType: "json"
+          }).success(function(data) {
+            if (_this.editor.suggest_handler) {
+              _this.fetch_results = _this.editor.suggest_handler(data);
+            } else {
+              _this.fetch_results = data;
+            }
+            if (cb) {
+              return cb(e);
+            }
+          }).error(function(data, err) {
+            return console.log("error fetching results");
+          });
+        };
+      })(this), this.editor.suggest_query_timeout);
+    };
+
+    Suggest.prototype.insideQuery = function() {
+      return $(this.editor.getSelectionStart()).hasClass("markup--query");
+    };
+
+    Suggest.prototype.wrapperTemplate = function(name) {
+      return "<span class='markup--query'>" + name + "</span>";
+    };
+
+    Suggest.prototype.pasteHtmlAtCaret = function(html, selectPastedContent) {
+      var el, firstNode, frag, lastNode, node, originalRange, range, sel;
+      sel = void 0;
+      range = void 0;
+      if (window.getSelection) {
+        sel = window.getSelection();
+        if (sel.getRangeAt && sel.rangeCount) {
+          range = sel.getRangeAt(0);
+          range.deleteContents();
+          el = document.createElement('div');
+          el.innerHTML = html;
+          frag = document.createDocumentFragment();
+          node = void 0;
+          lastNode = void 0;
+          while (node = el.firstChild) {
+            lastNode = frag.appendChild(node);
+          }
+          firstNode = frag.firstChild;
+          range.insertNode(frag);
+          if (lastNode) {
+            range = range.cloneRange();
+            range.setStartAfter(lastNode);
+            if (selectPastedContent) {
+              range.setStartBefore(firstNode);
+            } else {
+              range.collapse(true);
+            }
+            sel.removeAllRanges();
+            sel.addRange(range);
+          }
+        }
+      } else if ((sel = document.selection) && sel.type !== 'Control') {
+        originalRange = sel.createRange();
+        originalRange.collapse(true);
+        sel.createRange().pasteHTML(html);
+        if (selectPastedContent) {
+          range = sel.createRange();
+          range.setEndPoint('StartToStart', originalRange);
+          range.select();
         }
       }
-      return $item;
     };
 
-    return Editor;
+    return Suggest;
 
-  })(Dante.View);
+  })(Dante.View.Behavior);
 
 }).call(this);
 (function() {
@@ -1937,7 +2631,7 @@
     };
 
     Uploader.prototype.insertTemplate = function() {
-      return "<figure contenteditable='false' class='graf graf--figure is-defaultValue' name='" + (utils.generateUniqueName()) + "' tabindex='0'> <div style='' class='aspectRatioPlaceholder is-locked'> <div style='padding-bottom: 100%;' class='aspect-ratio-fill'></div> <img src='' data-height='' data-width='' data-image-id='' class='graf-image' data-delayed-src=''> </div> <figcaption contenteditable='true' data-default-value='Type caption for image (optional)' class='imageCaption'> <span class='defaultValue'>Type caption for image (optional)</span> <br> </figcaption> </figure>";
+      return "<figure contenteditable='false' class='graf graf--figure is-defaultValue' name='" + (utils.generateUniqueName()) + "' tabindex='0'> <div style='' class='aspectRatioPlaceholder is-locked'> <div style='padding-bottom: 100%;' class='aspect-ratio-fill'></div> <img src='' data-height='' data-width='' data-image-id='' class='graf-image' data-delayed-src=''> </div> <figcaption contenteditable='true' data-default-value='Type caption for image (optional)' class='imageCaption'> <span class='defaultValue'>" + this.current_editor.image_caption_placeholder + "</span> <br> </figcaption> </figure>";
     };
 
     Uploader.prototype.uploadExistentImage = function(image_element, opts) {
@@ -2164,7 +2858,7 @@
     };
 
     Uploader.prototype.uploadCompleted = function(url, node) {
-      return node.find("img").attr("src", url);
+      return node.find("img").attr("src", url).data("src", url);
     };
 
 
@@ -2178,23 +2872,30 @@
      */
 
     Uploader.prototype.handleBackspaceKey = function(e, node) {
-      var anchor_node;
-      utils.log("handleBackspaceKey on uploader widget");
-      if ($(node).hasClass("is-selected") && $(node).hasClass("graf--figure")) {
-        anchor_node = this.current_editor.selection().anchorNode;
-        if ((anchor_node != null) && $(anchor_node.parentNode).hasClass("imageCaption")) {
-          if (this.current_editor.isFirstChar()) {
-            return true;
-          } else {
-            return false;
-          }
-        }
-      } else if ($(".is-selected").hasClass("is-mediaFocused")) {
-        utils.log("Replacing selected node");
-        this.current_editor.replaceWith("p", $(".is-selected"));
-        this.current_editor.setRangeAt($(".is-selected")[0]);
-        return true;
-      }
+
+      /*
+      utils.log "handleBackspaceKey on uploader widget"
+         
+       * remove graf figure if is selected but not in range (not focus on caption)
+      if $(node).hasClass("is-selected") && $(node).hasClass("graf--figure")
+         * exit if selection is on caption
+        anchor_node = @current_editor.selection().anchorNode
+        
+         * return false unless backspace is in the first char
+        if ( anchor_node? && $(anchor_node.parentNode).hasClass("imageCaption"))
+          if @current_editor.isFirstChar()
+            return true
+          else
+            return false
+      
+      else if $(".is-selected").hasClass("is-mediaFocused")
+         * assume that select node is the current media element
+         * if it's focused when backspace it means that it should be removed
+        utils.log("Replacing selected node")
+        @current_editor.replaceWith("p", $(".is-selected"))
+        @current_editor.setRangeAt($(".is-selected")[0])
+        return true
+       */
     };
 
     return Uploader;
@@ -2239,7 +2940,7 @@
     };
 
     Embed.prototype.embedTemplate = function() {
-      return "<figure contenteditable='false' class='graf--figure graf--iframe graf--first' name='504e' tabindex='0'> <div class='iframeContainer'> <iframe frameborder='0' width='700' height='393' data-media-id='' src='' data-height='480' data-width='854'> </iframe> </div> <figcaption contenteditable='true' data-default-value='Type caption for embed (optional)' class='imageCaption'> <a rel='nofollow' class='markup--anchor markup--figure-anchor' data-href='' href='' target='_blank'> </a> </figcaption> </figure>";
+      return "<figure contenteditable='false' class='graf--figure graf--iframe graf--first' name='504e' tabindex='0'> <div class='iframeContainer'> <iframe frameborder='0' width='700' height='393' data-media-id='' src='' data-height='480' data-width='854'> </iframe> </div> <figcaption contenteditable='true' data-default-value='" + this.current_editor.embed_caption_placeholder + "' class='imageCaption'> <a rel='nofollow' class='markup--anchor markup--figure-anchor' data-href='' href='' target='_blank'> </a> </figcaption> </figure>";
     };
 
     Embed.prototype.displayEmbedPlaceHolder = function() {
@@ -2253,12 +2954,14 @@
     };
 
     Embed.prototype.getEmbedFromNode = function(node) {
+      var url;
       this.node = $(node);
       this.node_name = this.node.attr("name");
       this.node.addClass("spinner");
-      return $.getJSON("" + this.current_editor.oembed_url + ($(this.node).text())).success((function(_this) {
+      url = "" + this.current_editor.oembed_url + ($(this.node).text()) + "&scheme=https";
+      return $.getJSON(url).success((function(_this) {
         return function(data) {
-          var iframe_src, replaced_node, tmpl, url;
+          var iframe_src, replaced_node, tmpl;
           _this.node = $("[name=" + _this.node_name + "]");
           iframe_src = $(data.html).prop("src");
           tmpl = $(_this.embedTemplate());
@@ -2321,7 +3024,7 @@
     };
 
     EmbedExtract.prototype.extractTemplate = function() {
-      return "<div class='graf graf--mixtapeEmbed is-selected' name=''> <a target='_blank' data-media-id='' class='js-mixtapeImage mixtapeImage mixtapeImage--empty u-ignoreBlock' href=''> </a> <a data-tooltip-type='link' data-tooltip-position='bottom' data-tooltip='' title='' class='markup--anchor markup--mixtapeEmbed-anchor' data-href='' href='' target='_blank'> <strong class='markup--strong markup--mixtapeEmbed-strong'></strong> <em class='markup--em markup--mixtapeEmbed-em'></em> </a> </div>";
+      return "<div class='graf graf--mixtapeEmbed is-selected' name=''> <a target='_blank' data-media-id='' class='js-mixtapeImage mixtapeImage mixtapeImage--empty u-ignoreBlock' href=''> </a> <a data-tooltip-type='link' data-tooltip-position='bottom' data-tooltip='' title='' class='markup--anchor markup--mixtapeEmbed-anchor' data-href='' href='' target='_blank'> <strong class='markup--strong markup--mixtapeEmbed-strong'> </strong> <em class='markup--em markup--mixtapeEmbed-em'> </em> </a> </div>";
     };
 
     EmbedExtract.prototype.displayExtractPlaceHolder = function() {
@@ -2428,8 +3131,17 @@
     };
 
     Tooltip.prototype.render = function() {
-      $(this.el).html(this.template());
-      $(this.el).addClass("is-active");
+      var tooltip, tooltip_button_size, tooltip_button_spacing, tooltip_button_width, tooltip_buttons, tooltip_menu, tooltip_menu_size;
+      tooltip = $(this.el);
+      tooltip.html(this.template());
+      tooltip.addClass("is-active");
+      tooltip_menu = tooltip.find(".inlineTooltip-menu");
+      tooltip_buttons = tooltip_menu.find(".inlineTooltip-button");
+      tooltip_button_width = $(tooltip_buttons[0]).css("width");
+      tooltip_button_spacing = $(tooltip_buttons[0]).css("margin-right");
+      tooltip_button_size = parseInt(tooltip_button_width.replace(/px/, "")) + parseInt(tooltip_button_spacing.replace(/px/, ""));
+      tooltip_menu_size = tooltip_button_size * tooltip_buttons.length;
+      tooltip_menu.css("width", "" + (tooltip_menu_size + 1) + "px");
       return this;
     };
 
@@ -2443,7 +3155,7 @@
       var control_spacing, control_width, coord_left, coord_top, pull_size, tooltip;
       tooltip = $(this.el);
       control_width = tooltip.find(".control").css("width");
-      control_spacing = tooltip.find(".inlineTooltip-menu").css("padding-left");
+      control_spacing = tooltip.find(".inlineTooltip-button").css("margin-right");
       pull_size = parseInt(control_width.replace(/px/, "")) + parseInt(control_spacing.replace(/px/, ""));
       coord_left = coords.left - pull_size;
       coord_top = coords.top;
@@ -2507,8 +3219,8 @@
     PopOver.prototype.el = "body";
 
     PopOver.prototype.events = {
-      "mouseover .popover": "cancelHide",
-      "mouseout  .popover": "hide"
+      "mouseover .popover--tooltip": "cancelHide",
+      "mouseout  .popover--tooltip": "hide"
     };
 
     PopOver.prototype.initialize = function(opts) {
@@ -2516,6 +3228,7 @@
         opts = {};
       }
       utils.log("initialized popover");
+      this.pop_over_element = ".popover--tooltip";
       this.editor = opts.editor;
       this.hideTimeout;
       return this.settings = {
@@ -2524,20 +3237,21 @@
     };
 
     PopOver.prototype.template = function() {
-      return "<div class='popover popover--tooltip popover--Linktooltip popover--bottom is-active'> <div class='popover-inner'> <a href='#' target='_blank'> Link </a> </div> <div class='popover-arrow'> </div> </div>";
+      return "<div class='dante-popover popover--tooltip popover--Linktooltip popover--bottom is-active'> <div class='popover-inner'> <a href='#' target='_blank'> Link </a> </div> <div class='popover-arrow'> </div> </div>";
     };
 
     PopOver.prototype.positionAt = function(ev) {
-      var left_value, popover_width, target, target_height, target_offset, target_positions, target_width, top_value;
+      var left_value, popover_width, target, target_height, target_offset, target_positions, target_width, top_value, wrapperOffset;
       target = $(ev.currentTarget);
+      wrapperOffset = target.closest('article.postArticle').offset();
       target_positions = this.resolveTargetPosition(target);
       target_offset = target.offset();
       target_width = target.outerWidth();
       target_height = target.outerHeight();
-      popover_width = $(this.el).find(".popover").outerWidth();
+      popover_width = this.findElement().outerWidth();
       top_value = target_positions.top + target_height;
-      left_value = target_offset.left + (target_width / 2) - (popover_width / 2);
-      $(this.el).find(".popover").css("top", top_value).css("left", left_value).show();
+      left_value = target_offset.left + (target_width / 2) - (popover_width / 2) - wrapperOffset.left;
+      this.findElement().css("top", top_value).css("left", left_value).show();
       return this.handleDirection(target);
     };
 
@@ -2545,9 +3259,9 @@
       var target;
       this.cancelHide();
       target = $(ev.currentTarget);
-      $(this.el).find(".popover-inner a").text(target.attr('href')).attr('href', target.attr("href"));
+      this.findElement().find(".popover-inner a").text(target.attr('href')).attr('href', target.attr("href"));
       this.positionAt(ev);
-      $(this.el).find(".popover--tooltip").css("pointer-events", "auto");
+      this.findElement().css("pointer-events", "auto");
       return $(this.el).show();
     };
 
@@ -2560,7 +3274,7 @@
       this.cancelHide();
       return this.hideTimeout = setTimeout((function(_this) {
         return function() {
-          return $(_this.el).find(".popover").hide();
+          return _this.findElement().hide();
         };
       })(this), this.settings.timeout);
     };
@@ -2575,10 +3289,14 @@
 
     PopOver.prototype.handleDirection = function(target) {
       if (target.parents(".graf--mixtapeEmbed").exists()) {
-        return $(this.el).find(".popover").removeClass("popover--bottom").addClass("popover--top");
+        return this.findElement().removeClass("popover--bottom").addClass("popover--top");
       } else {
-        return $(this.el).find(".popover").removeClass("popover--top").addClass("popover--bottom");
+        return this.findElement().removeClass("popover--top").addClass("popover--bottom");
       }
+    };
+
+    PopOver.prototype.findElement = function() {
+      return $(this.el).find(this.pop_over_element);
     };
 
     PopOver.prototype.render = function() {
@@ -2588,6 +3306,353 @@
     return PopOver;
 
   })(Dante.View);
+
+}).call(this);
+(function() {
+  var utils,
+    __hasProp = {}.hasOwnProperty,
+    __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; };
+
+  utils = Dante.utils;
+
+  Dante.Editor.PopOverCard = (function(_super) {
+    __extends(PopOverCard, _super);
+
+    function PopOverCard() {
+      return PopOverCard.__super__.constructor.apply(this, arguments);
+    }
+
+    PopOverCard.prototype.el = "body";
+
+    PopOverCard.prototype.events = {
+      "mouseover .popover--card": "cancelHide",
+      "mouseout  .popover--card": "hide",
+      "mouseover .markup--user": "displayPopOver",
+      "mouseout  .markup--user": "hidePopOver"
+    };
+
+    PopOverCard.prototype.initialize = function(opts) {
+      if (opts == null) {
+        opts = {};
+      }
+      this.pop_over_element = ".popover--card";
+      utils.log("initialized popover");
+      this.editor = opts.editor;
+      this.hideTimeout;
+      this.settings = {
+        timeout: 300
+      };
+      return this.card_data = {};
+    };
+
+    PopOverCard.prototype.template = function() {
+      return "<div class='dante-popover popover--card js-popover popover--animated popover--flexible popover--top is-active'> <div class='popover-inner js-popover-inner'> </div> </div>";
+    };
+
+    PopOverCard.prototype.cardTemplate = function() {
+      return "<div class='popoverCard'> <div class='u-clearfix'> <div class='u-floatLeft popoverCard-meta'> <h4 class='popoverCard-title'> <a class='link u-baseColor--link' href='" + this.card_data.href + "' title='" + this.card_data.text + "' aria-label='" + this.card_data.text + "' data-user-id='" + this.card_data.id + "' dir='auto'> " + this.card_data.text + " </a> </h4> <div class='popoverCard-description'> " + this.card_data.description + " </div> </div> <div class='u-floatRight popoverCard-avatar'> <a class='link dante-avatar u-baseColor--link' href='" + this.card_data.href + "' title='" + this.card_data.text + "' aria-label='" + this.card_data.text + "' data-user-id='" + this.card_data.id + "' dir='auto'> <img src='" + this.card_data.avatar + "' class='avatar-image avatar-image--small' alt='" + this.card_data.text + "'> </a> </div> </div> " + (this.footerTemplate()) + " <div class='popover-arrow'></div> </div>";
+    };
+
+    PopOverCard.prototype.footerTemplate = function() {
+      return "";
+
+      /*
+      "<div class='popoverCard-actions u-clearfix'>
+        <div class='u-floatLeft popoverCard-stats'>
+            <span class='popoverCard-stat'>
+                Following
+                <span class='popoverCard-count js-userFollowingCount'>124</span>
+            </span>
+            <span class='popoverCard-stat'>
+                Followers
+                <span class='popoverCard-count js-userFollowersCount'>79</span>
+            </span>
+        </div>
+      </div>"
+       */
+    };
+
+    PopOverCard.prototype.displayPopOver = function(ev) {
+      return this.displayAt(ev);
+    };
+
+    PopOverCard.prototype.displayAt = function(ev) {
+      this.cancelHide();
+      return $.getJSON($(ev.currentTarget).data().href).success((function(_this) {
+        return function(data) {
+          if (_this.editor.suggest_resource_handler) {
+            _this.card_data = _this.editor.suggest_resource_handler(data);
+          } else {
+            _this.card_data = data;
+          }
+          _this.refreshTemplate();
+          return _this.positionAt(ev);
+        };
+      })(this));
+    };
+
+    PopOverCard.prototype.hidePopOver = function(ev) {
+      return this.hide(ev);
+    };
+
+    PopOverCard.prototype.refreshTemplate = function() {
+      return $(".popover--card .popover-inner").html(this.cardTemplate());
+    };
+
+    return PopOverCard;
+
+  })(Dante.Editor.PopOver);
+
+}).call(this);
+(function() {
+  var utils,
+    __hasProp = {}.hasOwnProperty,
+    __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; };
+
+  utils = Dante.utils;
+
+  Dante.Editor.ImageTooltip = (function(_super) {
+    __extends(ImageTooltip, _super);
+
+    function ImageTooltip() {
+      return ImageTooltip.__super__.constructor.apply(this, arguments);
+    }
+
+    ImageTooltip.prototype.el = "body";
+
+    ImageTooltip.prototype.events = {
+      "click .graf": "handleHide",
+      "click .dante-menu-button.align-left": "alignLeft",
+      "click .dante-menu-button.align-center": "alignCenter"
+    };
+
+    ImageTooltip.prototype.initialize = function(opts) {
+      if (opts == null) {
+        opts = {};
+      }
+      utils.log("initialized popover");
+      this.pop_over_element = ".popover--Aligntooltip";
+      this.editor = opts.editor;
+      this.hideTimeout;
+      return this.settings = {
+        timeout: 100
+      };
+    };
+
+    ImageTooltip.prototype.alignLeft = function(ev) {
+      this.activateLink($(ev.currentTarget));
+      return this.findSelectedImage().addClass("graf--layoutOutsetLeft");
+    };
+
+    ImageTooltip.prototype.handleHide = function(ev) {
+      var target;
+      target = $(ev.currentTarget);
+      if (!(target.hasClass("graf--figure") && target.hasClass("is-mediaFocused"))) {
+        return this.hide(ev);
+      }
+    };
+
+    ImageTooltip.prototype.alignCenter = function(ev) {
+      this.activateLink($(ev.currentTarget));
+      this.findSelectedImage().removeClass("graf--layoutOutsetLeft");
+      return this.repositionWithActiveImage();
+    };
+
+    ImageTooltip.prototype.handleActiveClass = function() {
+      this.findElement().find(".dante-menu-button").removeClass("active");
+      if (this.findSelectedImage().hasClass("graf--layoutOutsetLeft")) {
+        return this.findElement().find(".icon-image-left").parent().addClass("active");
+      } else {
+        return this.findElement().find(".icon-image-center").parent().addClass("active");
+      }
+    };
+
+    ImageTooltip.prototype.activateLink = function(element) {
+      return setTimeout((function(_this) {
+        return function() {
+          return _this.repositionWithActiveImage();
+        };
+      })(this), 20);
+    };
+
+    ImageTooltip.prototype.repositionWithActiveImage = function() {
+      return this.positionPopOver(this.findSelectedImage().find("div"));
+    };
+
+    ImageTooltip.prototype.template = function() {
+      return "<div class='dante-popover popover--Aligntooltip popover--top'> <div class='popover-inner'> <ul class='dante-menu-buttons'> <li class='dante-menu-button align-left'> <span class='tooltip-icon icon-image-left'></span> </li> <li class='dante-menu-button align-wide hidden'> <span class='tooltip-icon icon-image-wide'></span> </li> <li class='dante-menu-button align-fill hidden'> <span class='tooltip-icon icon-image-fill'></span> </li> <li class='dante-menu-button align-center'> <span class='tooltip-icon icon-image-center'></span> </li> </ul> </div> <div class='popover-arrow'> </div> </div>";
+    };
+
+    ImageTooltip.prototype.positionPopOver = function(target) {
+      var left_value, pad_top, popover_width, target_height, target_offset, target_position, target_width, top_value;
+      target_offset = target.offset();
+      target_position = target.parent().position();
+      target_width = target.outerWidth();
+      target_height = target.outerHeight();
+      popover_width = this.findElement().outerWidth();
+      pad_top = this.findSelectedImage().hasClass("graf--layoutOutsetLeft") ? 72 : 74;
+      top_value = target_position.top - pad_top;
+      left_value = target_offset.left + (target_width / 2) - (popover_width / 2);
+      this.findElement().css("top", top_value).css("left", left_value).show().addClass("is-active");
+      return this.handleActiveClass();
+    };
+
+    ImageTooltip.prototype.hide = function(ev) {
+      this.cancelHide();
+      return this.hideTimeout = setTimeout((function(_this) {
+        return function() {
+          return _this.findElement().hide().removeClass("is-active");
+        };
+      })(this), this.settings.timeout);
+    };
+
+    ImageTooltip.prototype.findSelectedImage = function() {
+      return $(".graf--figure.is-mediaFocused");
+    };
+
+    ImageTooltip.prototype.render = function() {
+      return $(this.template()).insertAfter(this.editor.$el);
+    };
+
+    return ImageTooltip;
+
+  })(Dante.Editor.PopOver);
+
+}).call(this);
+(function() {
+  var utils,
+    __hasProp = {}.hasOwnProperty,
+    __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; };
+
+  utils = Dante.utils;
+
+  Dante.Editor.PopOverTypeAhead = (function(_super) {
+    __extends(PopOverTypeAhead, _super);
+
+    function PopOverTypeAhead() {
+      return PopOverTypeAhead.__super__.constructor.apply(this, arguments);
+    }
+
+    PopOverTypeAhead.prototype.el = "body";
+
+    PopOverTypeAhead.prototype.events = {
+      "mouseover .popover--typeahead": "cancelHide",
+      "mouseout  .popover--typeahead": "hide",
+      "click .typeahead-item": "handleOptionSelection"
+    };
+
+    PopOverTypeAhead.prototype.initialize = function(opts) {
+      if (opts == null) {
+        opts = {};
+      }
+      this.pop_over_element = "popover--typeahead";
+      utils.log("initialized popover");
+      this.editor = opts.editor;
+      this.hideTimeout;
+      this.settings = {
+        timeout: 300
+      };
+      return this.typeaheadStyles();
+    };
+
+    PopOverTypeAhead.prototype.template = function() {
+      return "<div class='dante-popover popover--typeahead js-popover typeahead typeahead--mention popover--maxWidth360 popover--bottom is-active'> <div class='popover-inner js-popover-inner'> <ul></ul> </div> <div class='popover-arrow' style='left: 297px;'></div> </div>";
+    };
+
+    PopOverTypeAhead.prototype.popoverItem = function(item) {
+      return "<li class='typeahead-item' data-action-value='" + item.text + "' data-action='typeahead-populate' data-id='" + item.id + "' data-type='" + item.type + "' data-href='" + item.href + "'> <div class='dante-avatar'> <img src='" + item.avatar + "' class='avatar-image avatar-image--icon' alt='" + item.text + "'> <span class='avatar-text'>" + item.text + "</span> <em class='avatar-description'>" + item.description + "</em> </div> </li>";
+    };
+
+    PopOverTypeAhead.prototype.typeaheadStyles = function() {
+      return this.classesForCurrent = "typeahead typeahead--mention popover--maxWidth360";
+    };
+
+    PopOverTypeAhead.prototype.handleOptionSelection = function(ev) {
+      var data;
+      ev.preventDefault;
+      console.log("Select option here!");
+      data = $(ev.currentTarget).data();
+      $(".markup--query").replaceWith(this.linkTemplate(data));
+      return this.hide(0);
+    };
+
+    PopOverTypeAhead.prototype.linkTemplate = function(data) {
+      return "<a href='#' data-type='" + data.type + "' data-href='" + data.href + "' data-id='" + data.id + "' class='markup--user markup--p-user'> " + data.actionValue + " </a>";
+    };
+
+    PopOverTypeAhead.prototype.positionAt = function(target) {
+      var left_value, popover_width, target_height, target_offset, target_positions, target_width, top_value, wrapperOffset;
+      target = $(target);
+      wrapperOffset = target.closest('article.postArticle').offset();
+      target_positions = this.resolveTargetPosition(target);
+      target_offset = target.offset();
+      target_width = target.outerWidth();
+      target_height = target.outerHeight();
+      popover_width = this.findElement().outerWidth();
+      top_value = target_positions.top + target_height;
+      left_value = target_offset.left + (target_width / 2) - (popover_width / 2) - wrapperOffset.left;
+      this.findElement().css("top", top_value).css("left", left_value).show();
+      return this.handleDirection(target);
+    };
+
+    PopOverTypeAhead.prototype.displayAt = function(ev) {
+      this.cancelHide();
+      return this.positionAt(ev);
+    };
+
+    PopOverTypeAhead.prototype.cancelHide = function() {
+      utils.log("Cancel Hide");
+      return clearTimeout(this.hideTimeout);
+    };
+
+    PopOverTypeAhead.prototype.findElement = function() {
+      return $(this.el).find("." + this.pop_over_element);
+    };
+
+    PopOverTypeAhead.prototype.hide = function(ev, timeout) {
+      if (timeout == null) {
+        timeout = this.settings.timeout;
+      }
+      this.cancelHide();
+      return this.hideTimeout = setTimeout((function(_this) {
+        return function() {
+          return _this.findElement().hide();
+        };
+      })(this), timeout);
+    };
+
+    PopOverTypeAhead.prototype.appendData = function(data) {
+      this.findElement().find(".popover-inner ul").html("");
+      return _.each(data, (function(_this) {
+        return function(item) {
+          return _this.findElement().find(".popover-inner ul").append(_this.popoverItem(item));
+        };
+      })(this));
+    };
+
+    PopOverTypeAhead.prototype.resolveTargetPosition = function(target) {
+      if (target.parents(".graf--mixtapeEmbed").exists()) {
+        return target.parents(".graf--mixtapeEmbed").position();
+      } else {
+        return target.position();
+      }
+    };
+
+    PopOverTypeAhead.prototype.handleDirection = function(target) {
+      if (target.parents(".graf--mixtapeEmbed").exists()) {
+        return this.findElement().removeClass("popover--bottom").addClass("popover--top");
+      } else {
+        return this.findElement().removeClass("popover--top").addClass("popover--bottom");
+      }
+    };
+
+    PopOverTypeAhead.prototype.render = function() {
+      return $(this.template()).insertAfter(this.editor.$el);
+    };
+
+    return PopOverTypeAhead;
+
+  })(Dante.Editor.PopOver);
 
 }).call(this);
 (function() {
@@ -2645,20 +3710,24 @@
 
         /*
         buttons: [
-            'blockquote', 'h2', 'h3', 'p', 'code', 'insertorderedlist', 'insertunorderedlist', 'inserthorizontalrule',
+            'blockquote', 'h3', 'h4', 'p', 'code', 'insertorderedlist', 'insertunorderedlist', 'inserthorizontalrule',
             'indent', 'outdent', 'bold', 'italic', 'underline', 'createlink'
           ]
          */
-        buttons: ['bold', 'italic', 'h2', 'h3', 'h4', 'blockquote', 'createlink']
+        buttons: ['bold', 'italic', 'createlink', 'divider', 'h3', 'h4', 'blockquote']
       };
     };
 
     Menu.prototype.template = function() {
       var html;
-      html = "<div class='dante-menu-linkinput'><input class='dante-menu-input' placeholder='http://'><div class='dante-menu-button'>x</div></div>";
+      html = "<div class='dante-menu-linkinput'><input class='dante-menu-input' placeholder='Paste or type a link'><div class='dante-menu-button'>x</div></div>";
       html += "<ul class='dante-menu-buttons'>";
       _.each(this.config.buttons, function(item) {
-        return html += "<li class='dante-menu-button'><i class=\"dante-icon icon-" + item + "\" data-action=\"" + item + "\"></i></li>";
+        if (item === "divider") {
+          return html += "<li class='dante-menu-divider'></li>";
+        } else {
+          return html += "<li class='dante-menu-button'><i class=\"dante-icon icon-" + item + "\" data-action=\"" + item + "\"></i></li>";
+        }
       });
       html += "</ul>";
       return html;
@@ -2684,7 +3753,12 @@
           input.focus();
         }
       } else {
-        this.menuApply(action);
+        if ($(ev.currentTarget).hasClass("dante-menu-button--disabled")) {
+          utils.log("menu " + action + " item blocked!");
+          ev.preventDefault();
+        } else {
+          this.menuApply(action);
+        }
       }
       return false;
     };
@@ -2845,9 +3919,9 @@
               utils.log("nothing to select");
           }
           if (tag.match(/(?:h[1-6])/i)) {
-            $(_this.el).find(".icon-bold, .icon-italic, .icon-blockquote").parent("li").remove();
+            _this.toggleMenuButtons(_this.el, ".icon-bold, .icon-italic");
           } else if (tag === "indent") {
-            $(_this.el).find(".icon-h2, .icon-h3, .icon-h4, .icon-blockquote").parent("li").remove();
+            _this.toggleMenuButtons(_this.el, ".icon-h3, .icon-h4, .icon-blockquote");
           }
           return _this.highlight(tag);
         };
@@ -2856,6 +3930,10 @@
 
     Menu.prototype.highlight = function(tag) {
       return $(".icon-" + tag).parent("li").addClass("active");
+    };
+
+    Menu.prototype.toggleMenuButtons = function(el, buttons) {
+      return $(el).find(buttons).parent("li").addClass("dante-menu-button--disabled");
     };
 
     Menu.prototype.show = function() {
@@ -2874,6 +3952,13 @@
 
 }).call(this);
 //Editor components
+
+
+
+
+
+
+
 
 
 

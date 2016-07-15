@@ -17,17 +17,13 @@ class Dante.Editor extends Dante.View
     "mouseup"  : "handleMouseUp"
     "keydown"  : "handleKeyDown"
     "keyup"    : "handleKeyUp"
+    "keypress" : "handleKeyPress"
     "paste"    : "handlePaste"
     "dblclick" : "handleDblclick"
     "dragstart": "handleDrag"
     "drop"     : "handleDrag"
-    "click .graf--figure .aspectRatioPlaceholder" : "handleGrafFigureSelectImg"
-    "click .graf--figure figcaption"   : "handleGrafFigureSelectCaption"
-
-    "mouseover .graf--figure.graf--iframe" : "handleGrafFigureSelectIframe"
-    "mouseleave .graf--figure.graf--iframe" : "handleGrafFigureUnSelectIframe"
-    "keyup .graf--figure figcaption"   : "handleGrafCaptionTyping"
-
+    
+    # TODO: this events should be in tooltip class
     "mouseover .markup--anchor" : "displayPopOver"
     "mouseout  .markup--anchor" : "hidePopOver"
 
@@ -37,49 +33,94 @@ class Dante.Editor extends Dante.View
     @initial_html    = $(@el).html()
     @current_range   = null
     @current_node    = null
+    
     @el = opts.el || "#editor"
+    
     @upload_url      = opts.upload_url  || "/uploads.json"
     @upload_callback = opts.upload_callback
-    @oembed_url      = opts.oembed_url  || "http://api.embed.ly/1/oembed?url="
-    @extract_url     = opts.extract_url || "http://api.embed.ly/1/extract?key=86c28a410a104c8bb58848733c82f840&url="
+    @image_delete_callback = opts.image_delete_callback
+    @image_caption_placeholder = opts.image_caption_placeholder || "Type caption for image (optional)"
+
+    @oembed_url      = opts.oembed_url  || "http://api.embed.ly/1/oembed?key=#{opts.api_key}&url="
+    @extract_url     = opts.extract_url || "http://api.embed.ly/1/extract?key=#{opts.api_key}&url="
     @default_loading_placeholder = opts.default_loading_placeholder || Dante.defaults.image_placeholder
+    @embed_caption_placeholder = opts.embed_caption_placeholder || "Type caption for embed (optional)"
+
     @store_url       = opts.store_url
     @store_method    = opts.store_method || "POST"
+    @store_success_handler = opts.store_success_handler
+    
     @spell_check     = opts.spellcheck || false
     @disable_title   = opts.disable_title || false
-    @store_interval  = opts.store_interval || 15000
+    @store_interval  = opts.store_interval || 1500
     @paste_element_id = "#dante-paste-div"
     @tooltip_class   = opts.tooltip_class || Dante.Editor.Tooltip
+    
+    # suggest feature options
+    @suggest_url              = opts.suggest_url || "/api/suggest.json"
+    @suggest_query_param      = opts.suggest_query_param || "q"
+    @suggest_query_timeout    = opts.suggest_query_timeout || 300
+    @suggest_handler          = opts.suggest_handler || null
+    @suggest_resource_handler = opts.suggest_resource_handler || null
+    
+    opts.base_widgets   ||= ["uploader", "embed", "embed_extract"]
+    opts.base_behaviors ||= ["save", "image", "paste", "list", "suggest"]
+    opts.base_popovers  ||= ["anchor", "typeahead", "card", "align"]
 
-    opts.base_widgets ||= ["uploader", "embed", "embed_extract"]
-
-    @widgets = []
+    @widgets   = []
+    @behaviors = []
+    @popovers  = []
 
     window.debugMode = opts.debug || false
 
     $(@el).addClass("debug") if window.debugMode
 
-    if (localStorage.getItem('contenteditable'))
-      $(@el).html  localStorage.getItem('contenteditable')
-
-    @store()
-
     titleplaceholder    = opts.title_placeholder  || 'Title'
     @title_placeholder  = "<span class='defaultValue defaultValue--root'>#{titleplaceholder}</span><br>"
-    title               = opts.title              || ''
-    @title              = title
+    @title              = opts.title              || ''
     bodyplaceholder     = opts.body_placeholder   || 'Tell your story…'
     @body_placeholder   = "<span class='defaultValue defaultValue--root'>#{bodyplaceholder}</span><br>"
     embedplaceholder    = opts.embed_placeholder  || 'Paste a YouTube, Vine, Vimeo, or other video link, and press Enter'
     @embed_placeholder  = "<span class='defaultValue defaultValue--root'>#{embedplaceholder}</span><br>"
     extractplaceholder  = opts.extract_placeholder|| "Paste a link to embed content from another site (e.g. Twitter) and press Enter"
     @extract_placeholder= "<span class='defaultValue defaultValue--root'>#{extractplaceholder}</span><br>"
-
+    
     @initializeWidgets(opts)
 
+  initializeBehaviors: (opts)->
+    base_behaviors = opts.base_behaviors
+    self = @
+
+    if base_behaviors.indexOf("suggest") >= 0
+      @suggest_behavior = new Dante.View.Behavior.Suggest(current_editor: @, el: @el)
+      @behaviors.push @suggest_behavior
+
+    if base_behaviors.indexOf("save") >= 0
+      @save_behavior = new Dante.View.Behavior.Save(current_editor: @, el: @el)
+      @behaviors.push @save_behavior
+
+    if base_behaviors.indexOf("paste") >= 0
+      @paste_behavior = new Dante.View.Behavior.Paste(current_editor: @, el: @el)
+      @behaviors.push @paste_behavior
+
+    if base_behaviors.indexOf("image") >= 0
+      @image_behavior = new Dante.View.Behavior.Image(current_editor: @, el: @el)
+      @behaviors.push @image_behavior
+
+    if base_behaviors.indexOf("list") >= 0
+      @list_behavior = new Dante.View.Behavior.List(current_editor: @, el: @el)
+      @behaviors.push @list_behavior
+
+    # add extra behaviors
+    if opts.extra_behaviors
+      _.each opts.extra_behaviors, (w)=>
+        if !w.current_editor
+          w.current_editor = self
+        @behaviors.push w
+
   initializeWidgets: (opts)->
-    #TODO: this could be a hash to access widgets without var
-    #Base widgets
+    # TODO: this could be a hash to access widgets without var
+    # Base widgets
     base_widgets = opts.base_widgets
     self = @
 
@@ -95,37 +136,44 @@ class Dante.Editor extends Dante.View
       @embed_extract_widget = new Dante.View.TooltipWidget.EmbedExtract(current_editor: @)
       @widgets.push @embed_extract_widget
 
-    #add extra widgets
+    # add extra widgets
     if opts.extra_tooltip_widgets
       _.each opts.extra_tooltip_widgets, (w)=>
         if !w.current_editor
           w.current_editor = self
         @widgets.push w
 
-  store: ()->
-    #localStorage.setItem("contenteditable", $(@el).html() )
-    return unless @store_url
-    setTimeout ()=>
-      @checkforStore()
-    , @store_interval
+  intializePopOvers: (opts)->
 
-  checkforStore: ()->
-    if @content is @getContent()
-      utils.log "content not changed skip store"
-      @store()
-    else
-      utils.log "content changed! update"
-      @content = @getContent()
-      $.ajax
-        url: @store_url
-        method: @store_method
-        data:
-          body: @getContent()
-        success: (res)->
-          utils.log "store!"
-          utils.log res
-        complete: (jxhr) =>
-          @store()
+    base_popovers = opts.base_popovers
+    self = @
+
+    if base_popovers.indexOf("anchor") >= 0
+      @pop_over = new Dante.Editor.PopOver(editor: @)
+      @pop_over.render().hide()
+
+    if base_popovers.indexOf("typeahead") >= 0
+      @pop_over_typeahead  = new Dante.Editor.PopOverTypeAhead(editor: @)
+      @popovers.push @pop_over_typeahead
+
+    if base_popovers.indexOf("card") >= 0
+      @pop_over_card = new Dante.Editor.PopOverCard(editor: @)
+      @popovers.push @pop_over_card
+
+    if base_popovers.indexOf("align") >= 0
+      @pop_over_align = new Dante.Editor.ImageTooltip(editor: @)
+      @popovers.push @pop_over_align
+
+    # add extra widgets
+    if opts.extra_popovers
+      _.each opts.extra_popovers, (w)=>
+        if !w.current_editor
+          w.current_editor = self
+        @popovers.push w
+
+    # render and hide
+    @popovers.forEach (p)->
+      p.render().hide()
 
   getContent: ()->
     $(@el).find(".section-inner").html()
@@ -157,8 +205,9 @@ class Dante.Editor extends Dante.View
     $("<div class='inlineTooltip'></div>").insertAfter(@el)
     @editor_menu = new Dante.Editor.Menu(editor: @)
     @tooltip_view = new @tooltip_class(editor: @ , widgets: @widgets)
-    @pop_over = new Dante.Editor.PopOver(editor: @)
-    @pop_over.render().hide()
+    
+    @intializePopOvers(@editor_options)
+
     @tooltip_view.render().hide()
 
   appendInitialContent: ()=>
@@ -173,6 +222,7 @@ class Dante.Editor extends Dante.View
     @appendMenus()
     @appendInitialContent() unless _.isEmpty @initial_html.trim()
     @parseInitialMess()
+    @initializeBehaviors(@editor_options)
 
   restart: ()=>
     @render()
@@ -195,6 +245,11 @@ class Dante.Editor extends Dante.View
       selection = window.getSelection()
     else if (document.selection && document.selection.type != "Control")
       selection = document.selection
+
+  getSelectionStart: ->
+    node = document.getSelection().anchorNode
+    return if node is null
+    if node.nodeType == 3 then node.parentNode else node
 
   getRange: () ->
     editor = $(@el)[0]
@@ -290,12 +345,12 @@ class Dante.Editor extends Dante.View
     return if @selection().rangeCount < 1
     range = @selection().getRangeAt(0)
     node = range.commonAncestorContainer
-    return null  if not node or node is root
+    return null if not node or node is root
 
     #node = node.parentNode while node and (node.nodeType isnt 1) and (node.parentNode isnt root)
     #node = node.parentNode while node and (node.parentNode isnt root)
 
-    node = node.parentNode  while node and (node.nodeType isnt 1 or not $(node).hasClass("graf")) and (node.parentNode isnt root)
+    node = node.parentNode while node and (node.nodeType isnt 1 or not $(node).hasClass("graf")) and (node.parentNode isnt root)
     if not $(node).hasClass("graf--li")
       node = node.parentNode  while node and (node.parentNode isnt root)
 
@@ -312,19 +367,13 @@ class Dante.Editor extends Dante.View
   handleDrag: ()->
     return false
 
-  handleGrafCaptionTyping: (ev)->
-    if _.isEmpty(utils.getNode().textContent.trim())
-      $(@getNode()).addClass("is-defaultValue")
-    else
-      $(@getNode()).removeClass("is-defaultValue")
-
-  #get text of selected and displays menu
+  # get text of selected and displays menu
   handleTextSelection: (anchor_node)->
     @editor_menu.hide()
     text = @getSelectedText()
     if !$(anchor_node).is(".graf--mixtapeEmbed, .graf--figure") && !_.isEmpty text.trim()
-        @current_node  = anchor_node
-        @.displayMenu()
+      @current_node  = anchor_node
+      @.displayMenu()
 
   relocateMenu: (position)->
     height = @editor_menu.$el.outerHeight()
@@ -345,32 +394,6 @@ class Dante.Editor extends Dante.View
 
   hidePopOver: (ev)->
     @pop_over.hide(ev)
-
-  handleGrafFigureSelectImg: (ev)->
-    utils.log "FIGURE SELECT"
-    element = ev.currentTarget
-    @markAsSelected( element )
-    $(element).parent(".graf--figure").addClass("is-selected is-mediaFocused")
-    @selection().removeAllRanges()
-
-  handleGrafFigureSelectIframe: (ev)->
-    utils.log "FIGURE IFRAME SELECT"
-    element = ev.currentTarget
-    @iframeSelected = element
-    @markAsSelected( element )
-    $(element).addClass("is-selected is-mediaFocused")
-    @selection().removeAllRanges()
-
-  handleGrafFigureUnSelectIframe: (ev)->
-    utils.log "FIGURE IFRAME UNSELECT"
-    element = ev.currentTarget
-    @iframeSelected = null
-    $(element).removeClass("is-selected is-mediaFocused")
-
-  handleGrafFigureSelectCaption: (ev)->
-    utils.log "FIGCAPTION"
-    element = ev.currentTarget
-    $(element).parent(".graf--figure").removeClass("is-mediaFocused")
 
   handleMouseUp: (ev)=>
     utils.log "MOUSE UP"
@@ -395,110 +418,11 @@ class Dante.Editor extends Dante.View
     , 20
 
   #handle arrow direction from keyUp.
-  handleArrow: (ev)=>
+  handleArrowForKeyUp: (ev)=>
     current_node = $(@getNode())
     if current_node.length > 0
       @markAsSelected( current_node )
       @displayTooltipAt( current_node )
-
-  #handle arrow direction from keyDown.
-  handleArrowForKeyDown: (ev)=>
-    caret_node   = @getNode()
-    current_node = $(caret_node)
-    utils.log(ev)
-    ev_type = ev.originalEvent.key || ev.originalEvent.keyIdentifier
-
-    utils.log("ENTER ARROW for key #{ev_type}")
-
-    #handle keys for image figure
-    switch ev_type
-
-      when "Down"
-        #when graff-image selected but none selection is found
-        if _.isUndefined(current_node) or !current_node.exists()
-          if $(".is-selected").exists()
-            current_node = $(".is-selected")
-
-        next_node = current_node.next()
-
-        utils.log "NEXT NODE IS #{next_node.attr('class')}"
-        utils.log "CURRENT NODE IS #{current_node.attr('class')}"
-
-        return unless $(current_node).hasClass("graf")
-        return unless current_node.hasClass("graf--figure") or $(current_node).editableCaretOnLastLine()
-
-        utils.log "ENTER ARROW PASSED RETURNS"
-
-        #if next element is embed select & focus it
-        if next_node.hasClass("graf--figure") && caret_node
-          n = next_node.find(".imageCaption")
-          @scrollTo(n)
-          utils.log "1 down"
-          utils.log n[0]
-          @skip_keyup = true
-          @selection().removeAllRanges()
-          @markAsSelected(next_node)
-          next_node.addClass("is-mediaFocused is-selected")
-          return false
-        #if current node is embed
-        else if next_node.hasClass("graf--mixtapeEmbed")
-          n = current_node.next(".graf--mixtapeEmbed")
-          num = n[0].childNodes.length
-          @setRangeAt n[0], num
-          @scrollTo(n)
-          utils.log "2 down"
-          return false
-
-        if current_node.hasClass("graf--figure") && next_node.hasClass("graf")
-          @scrollTo(next_node)
-          utils.log "3 down, from figure to next graf"
-          #@skip_keyup = true
-          @markAsSelected(next_node)
-          @setRangeAt next_node[0]
-          return false
-
-      when "Up"
-        prev_node = current_node.prev()
-        utils.log "PREV NODE IS #{prev_node.attr('class')} #{prev_node.attr('name')}"
-        utils.log "CURRENT NODE IS up #{current_node.attr('class')}"
-
-        return unless $(current_node).hasClass("graf")
-        return unless $(current_node).editableCaretOnFirstLine()
-
-        utils.log "ENTER ARROW PASSED RETURNS"
-
-        if prev_node.hasClass("graf--figure")
-          utils.log "1 up"
-          n = prev_node.find(".imageCaption")
-          @scrollTo(n)
-          @skip_keyup = true
-          @selection().removeAllRanges()
-          @markAsSelected(prev_node)
-          prev_node.addClass("is-mediaFocused")
-          return false
-
-        else if prev_node.hasClass("graf--mixtapeEmbed")
-          n = current_node.prev(".graf--mixtapeEmbed")
-          num = n[0].childNodes.length
-          @setRangeAt n[0], num
-          @scrollTo(n)
-          utils.log "2 up"
-          return false
-
-        if current_node.hasClass("graf--figure") && prev_node.hasClass("graf")
-          @setRangeAt prev_node[0]
-          @scrollTo(prev_node)
-          utils.log "3 up"
-          return false
-
-        else if prev_node.hasClass("graf")
-          n = current_node.prev(".graf")
-          num = n[0].childNodes.length
-          @scrollTo(n)
-          utils.log "4 up"
-          @skip_keyup = true
-          @markAsSelected(prev_node)
-          return false
 
   #parse text for initial mess
   parseInitialMess: ()->
@@ -514,59 +438,20 @@ class Dante.Editor extends Dante.View
 
   #detects html data , creates a hidden node to paste ,
   #then clean up the content and copies to currentNode, very clever uh?
-  handlePaste: (ev)=>
-    utils.log("pasted!")
-    @aa = @getNode()
+  handlePaste: (e)=>
+    @continue = true
+    #handle paste for each widget
+    utils.log("HANDLING PASTE");
+    parent = @getNode()
 
-    pastedText = undefined
-    if (window.clipboardData && window.clipboardData.getData) #IE
-      pastedText = window.clipboardData.getData('Text')
-    else if (ev.originalEvent.clipboardData && ev.originalEvent.clipboardData.getData)
-      cbd = ev.originalEvent.clipboardData
-      pastedText = if _.isEmpty(cbd.getData('text/html')) then cbd.getData('text/plain') else cbd.getData('text/html')
+    _.each @behaviors, (b)=>
+      if b.handlePaste
+        b.handlePaste(e, parent);
 
-    utils.log("Process and handle text...")
-    #detect if is html
-    if pastedText.match(/<\/*[a-z][^>]+?>/gi)
-      utils.log("HTML DETECTED ON PASTE")
-      pastedText = pastedText.replace(/&.*;/g, "")
-
-      #convert pasted divs in p before copy contents into div
-      pastedText = pastedText.replace(/<div>([\w\W]*?)<\/div>/gi, '<p>$1</p>')
-
-      #create the placeholder element and assign pasted content
-      document.body.appendChild( $("<div id='#{@paste_element_id.replace('#', '')}' class='dante-paste'></div>")[0] )
-      $(@paste_element_id).html("<span>#{pastedText}</span>")
-
-      #clean pasted content
-
-      @setupElementsClasses $(@paste_element_id), (e)=>
-        # e is the target object which is cleaned
-        nodes = $(e.html()).insertAfter($(@aa))
-        #remove paste div since we wont use it until the next paste
-        e.remove()
-        #set caret on newly created node
-        last_node = nodes.last()[0]
-        num = last_node.childNodes.length
-        @setRangeAt(last_node, num)
-        #select new node
-        new_node = $(@getNode())
-        @markAsSelected(new_node)
-        @displayTooltipAt($(@el).find(".is-selected"))
-
-        @handleUnwrappedImages(nodes)
-
-        #scroll to element top
-        top = new_node.offset().top
-        $('html, body').animate
-          scrollTop: top
-        , 20
-
-
-      return false # Prevent the default handler from running.
+    return false unless @continue
 
   handleUnwrappedImages: (elements)->
-    #http://stackoverflow.com/questions/4998908/convert-data-uri-to-file-then-append-to-formdata
+    # http://stackoverflow.com/questions/4998908/convert-data-uri-to-file-then-append-to-formdata
     _.each elements.find("img"), (image)=>
       utils.log ("process image here!")
       @uploader_widget.uploadExistentImage(image)
@@ -578,9 +463,9 @@ class Dante.Editor extends Dante.View
     @setRangeAt($(element).prev()[0])
     $(element).remove()
 
-  #TODO: not used anymore, remove this
-  #when found that the current node is text node
-  #create a new <p> and focus
+  # TODO: not used anymore, remove this
+  # when found that the current node is text node
+  # create a new <p> and focus
   handleUnwrappedNode: (element)->
     tmpl = $(@baseParagraphTmpl())
     @setElementName(tmpl)
@@ -628,7 +513,7 @@ class Dante.Editor extends Dante.View
       else if !prev
         @.setRangeAt(@.$el.find(".section-inner p")[0])
 
-      @displayTooltipAt($(@el).find(".is-selected"))
+      @displayTooltipAt(@findSelected())
 
   #used when all the content is removed, then it re render
   handleCompleteDeletion: (element)->
@@ -665,12 +550,18 @@ class Dante.Editor extends Dante.View
     @scrollTo $(next)
 
   handleKeyDown: (e)->
+    
     utils.log "KEYDOWN"
+
+    @continue = true
 
     anchor_node = @getNode() #current node on which cursor is positioned
     parent = $(anchor_node)
 
     @markAsSelected( anchor_node ) if anchor_node
+
+    #handle keyups for each widget
+    utils.log("HANDLING Behavior KEYDOWN");
 
     if e.which is TAB
       @handleTab(anchor_node)
@@ -679,19 +570,12 @@ class Dante.Editor extends Dante.View
     if e.which is ENTER
 
       #removes previous selected nodes
-      $(@el).find(".is-selected").removeClass("is-selected")
+      @findSelected().removeClass("is-selected")
 
       utils.log @isLastChar()
 
-      #smart list support
-      if parent.hasClass("graf--p")
-        li = @handleSmartList(parent, e)
-        anchor_node = li if li
-      else if parent.hasClass("graf--li")
-        @handleListLineBreak(parent, e)
-
       #handle keydowns for each widget
-      utils.log("HANDLING WIDGET KEYDOWNS");
+      utils.log("HANDLING WIDGET ENTER");
       _.each @widgets, (w)=>
         if w.handleEnterKey
           w.handleEnterKey(e, parent);
@@ -705,9 +589,9 @@ class Dante.Editor extends Dante.View
       if parent.hasClass("graf--iframe") or parent.hasClass("graf--figure")
         if @isLastChar()
           @handleLineBreakWith("p", parent)
-          @setRangeAtText($(".is-selected")[0])
+          @setRangeAtText(@findSelected()[0])
 
-          $(".is-selected").trigger("mouseup") #is not making any change
+          @findSelected().trigger("mouseup") #is not making any change
           return false
         else
           return false
@@ -724,7 +608,7 @@ class Dante.Editor extends Dante.View
       setTimeout ()=>
         node = @getNode()
         return if _.isUndefined(node)
-        #set name on new element
+        # set name on new element
         @setElementName($(node))
 
         if node.nodeName.toLowerCase() is "div"
@@ -732,17 +616,17 @@ class Dante.Editor extends Dante.View
         @markAsSelected( $(node) ) #if anchor_node
         @setupFirstAndLast()
 
-        #empty childs if text is empty
+        # empty childs if text is empty
         if _.isEmpty $(node).text().trim()
           _.each $(node).children(), (n)->
             $(n).remove()
           $(node).append("<br>")
 
-        #shows tooltip
-        @displayTooltipAt($(@el).find(".is-selected"))
+        # shows tooltip
+        @displayTooltipAt(@findSelected())
       , 2
 
-    #delete key
+    # delete key
     if (e.which is BACKSPACE)
       eventHandled = false;
       @tooltip_view.hide()
@@ -769,71 +653,44 @@ class Dante.Editor extends Dante.View
         utils.log("SCAPE FROM BACKSPACE HANDLER")
         return false;
 
-      if(parent.hasClass("graf--li") and @getCharacterPrecedingCaret().length is 0)
-        return this.handleListBackspace(parent, e);
-
       #select an image if backspacing into it from a paragraph
-      if($(anchor_node).hasClass("graf--p") && @isFirstChar() )
-        if($(anchor_node).prev().hasClass("graf--figure") && @getSelectedText().length == 0)
-          e.preventDefault();
-          $(anchor_node).prev().find("img").click();
-          utils.log("Focus on the previous image");
+      #if($(anchor_node).hasClass("graf--p") && @isFirstChar() )
+      #  if($(anchor_node).prev().hasClass("graf--figure") && @getSelectedText().length == 0)
+      #    e.preventDefault();
+      #    $(anchor_node).prev().find("img").click();
+      #    utils.log("Focus on the previous image");
 
       if $(utils_anchor_node).hasClass("section-content") || $(utils_anchor_node).hasClass("graf--first")
         utils.log "SECTION DETECTED FROM KEYDOWN #{_.isEmpty($(utils_anchor_node).text())}"
         return false if _.isEmpty($(utils_anchor_node).text())
 
       if anchor_node && anchor_node.nodeType is 3
-        #@displayEmptyPlaceholder()
+        # @displayEmptyPlaceholder()
         utils.log("TextNode detected from Down!")
         #return false
-
-      #supress del into & delete embed if empty content found on delete key
-      if $(anchor_node).hasClass("graf--mixtapeEmbed") or $(anchor_node).hasClass("graf--iframe")
-        if _.isEmpty $(anchor_node).text().trim() or @isFirstChar()
-          utils.log("Check for inmediate deletion on empty embed text")
-          @inmediateDeletion = @isSelectingAll(anchor_node)
-          @handleInmediateDeletion($(anchor_node)) if @inmediateDeletion
-          return false
-
-      #TODO: supress del when the prev el is embed and current_node is at first char
-      if $(anchor_node).prev().hasClass("graf--mixtapeEmbed")
-        return false if @isFirstChar() && !_.isEmpty( $(anchor_node).text().trim() )
-
-    #spacebar
-    if (e.which is SPACEBAR)
-      utils.log("SPACEBAR")
-      if (parent.hasClass("graf--p"))
-        @handleSmartList(parent, e)
     
-    #arrows key
-    #up & down
-    if _.contains([UPARROW, DOWNARROW], e.which)
-      utils.log e.which
-      @handleArrowForKeyDown(e)
-      #return false
-
     #hides tooltip if anchor_node text is empty
     if anchor_node
-      unless _.isEmpty($(anchor_node).text())
+      if !_.isEmpty($(anchor_node).text())
         @tooltip_view.hide()
         $(anchor_node).removeClass("graf--empty")
 
-    #when user types over a selected image (graf--figure)
-    #unselect image , and set range on caption
-    if _.isUndefined(anchor_node) && $(".is-selected").hasClass("is-mediaFocused")
-      @setRangeAt $(".is-selected").find("figcaption")[0]
-      $(".is-selected").removeClass("is-mediaFocused")
-      return false
+    _.each @behaviors, (b)=>
+      if b.handleKeyDown
+        b.handleKeyDown(e, parent);
+
+    return false unless @continue
 
   handleKeyUp: (e , node)->
+
+    @continue = true
 
     if @skip_keyup
       @skip_keyup = null
       utils.log "SKIP KEYUP"
       return false
 
-    utils.log "KEYUP"
+    utils.log "ENTER KEYUP"
 
     @editor_menu.hide() #hides menu just in case
     @reachedTop = false
@@ -841,10 +698,6 @@ class Dante.Editor extends Dante.View
     utils_anchor_node = utils.getNode()
 
     @handleTextSelection(anchor_node)
-
-    if (_.contains([BACKSPACE, SPACEBAR, ENTER], e.which))
-      if $(anchor_node).hasClass("graf--li")
-        @removeSpanTag($(anchor_node));
 
     if (e.which == BACKSPACE)
 
@@ -886,13 +739,31 @@ class Dante.Editor extends Dante.View
       #  @setupFirstAndLast()
       #  @displayTooltipAt($(@el).find(".is-selected"))
 
-
     #arrows key
     if _.contains([LEFTARROW, UPARROW, RIGHTARROW, DOWNARROW], e.which)
-      @handleArrow(e)
+      @handleArrowForKeyUp(e)
       #return false
 
-  #TODO: Separate in little functions
+    # handle keyups for each widget
+    utils.log("HANDLING Behavior KEYUPS");
+    _.each @behaviors, (b)=>
+      if b.handleKeyUp
+        b.handleKeyUp(e)
+
+    return false unless @continue
+
+  handleKeyPress: (e, node)->
+    anchor_node = @getNode()
+    parent = $(anchor_node)
+
+    @hidePlaceholder(parent)
+
+    # handle keyups for each widget
+    utils.log("HANDLING Behavior KEYPRESS");
+    _.each @behaviors, (b)=>
+      if b.handleKeyPress
+        b.handleKeyPress(e, parent);
+
   handleLineBreakWith: (element_type, from_element)->
     new_paragraph = $("<#{element_type} class='graf graf--#{element_type} graf--empty is-selected'><br/></#{element_type}>")
     if from_element.parent().is('[class^="graf--"]')
@@ -924,13 +795,15 @@ class Dante.Editor extends Dante.View
 
   #mark the current row as selected
   markAsSelected: (element)->
-    utils.log element
+    utils.log "MARK AS SELECTED"
+
     return if _.isUndefined element
 
-    $(@el).find(".is-selected").removeClass("is-mediaFocused is-selected")
+    @findSelected().removeClass("is-mediaFocused is-selected")
+
     $(element).addClass("is-selected")
 
-    $(element).find(".defaultValue").remove()
+    #$(element).find(".defaultValue").remove()
     #set reached top if element is first!
     if $(element).hasClass("graf--first")
       @reachedTop = true
@@ -1006,7 +879,7 @@ class Dante.Editor extends Dante.View
     @cleanContents(element)
     @wrapTextNodes(element)
     #setup classes
-    _.each  element.children(), (n)=>
+    _.each element.children(), (n)=>
       name = $(n).prop("tagName").toLowerCase()
       n = @addClassesToElement(n)
       @setElementName(n)
@@ -1017,9 +890,7 @@ class Dante.Editor extends Dante.View
     #, 20
 
   cleanContents: (element)->
-    #TODO: should config tags
-    utils.log "ti"
-    utils.log element
+    # TODO: should config tags
     if _.isUndefined(element)
       element = $(@el).find('.section-inner')
     else
@@ -1031,7 +902,7 @@ class Dante.Editor extends Dante.View
 
       attributes:
         '__ALL__': ['class']
-        a: ['href', 'title', 'target']
+        a: ['href', 'title', 'target', 'data-id', 'data-type', 'data-href', 'data-avatar']
         img: ['src']
 
       protocols:
@@ -1102,9 +973,10 @@ class Dante.Editor extends Dante.View
 
   setupLink: (n)->
     parent_name = $(n).parent().prop("tagName").toLowerCase()
-    $(n).addClass("markup--anchor markup--#{parent_name}-anchor")
-    href = $(n).attr("href")
-    $(n).attr("data-href", href)
+    unless $(n).data("type") is "user"
+      $(n).addClass("markup--anchor markup--#{parent_name}-anchor")
+      href = $(n).attr("href")
+      $(n).attr("data-href", href)
 
   preCleanNode: (element)->
     s = new Sanitize
@@ -1124,7 +996,7 @@ class Dante.Editor extends Dante.View
 
   setupFirstAndLast: ()=>
     childs = $(@el).find(".section-inner").children()
-    childs.removeClass("graf--last , graf--first")
+    childs.removeClass("graf--last, graf--first")
     childs.first().addClass("graf--first")
     childs.last().addClass("graf--last")
 
@@ -1141,117 +1013,11 @@ class Dante.Editor extends Dante.View
   setElementName: (element)->
     $(element).attr("name", utils.generateUniqueName())
 
-  # LIST METHODS
-
-  listify: ($paragraph, listType, regex)->
-
-    utils.log "LISTIFY PARAGRAPH"
-
-    @removeSpanTag($paragraph);
-
-    content = $paragraph.html().replace(/&nbsp;/g, " ").replace(regex, "")
-
-    switch(listType)
-      when "ul" then $list = $("<ul></ul>")
-      when "ol" then $list = $("<ol></ol>")
-      else return false
-
-    @addClassesToElement($list[0])
-    @replaceWith("li", $paragraph)
-    $li = $(".is-selected")
-
-    @setElementName($li[0])
-
-    $li.html(content).wrap($list)
-
-    if($li.find("br").length == 0)
-      $li.append("<br/>")
-
-    @setRangeAt($li[0])
-
-    $li[0]
-
-  handleSmartList: ($item, e)->
-    utils.log("HANDLE A SMART LIST")
-
-    chars = @getCharacterPrecedingCaret()
-    match = chars.match(/^\s*(\-|\*)\s*$/)
-    if(match)
-        utils.log("CREATING LIST ITEM")
-        e.preventDefault()
-        regex = new RegExp(/\s*(\-|\*)\s*/)
-        $li = @listify($item, "ul", regex)
-    else
-      match = chars.match(/^\s*1(\.|\))\s*$/)
-      if(match)
-        utils.log("CREATING LIST ITEM")
-        e.preventDefault()
-
-        regex = new RegExp(/\s*1(\.|\))\s*/)
-        $li = @listify($item, "ol", regex)
-    $li
-
-  handleListLineBreak: ($li, e)->
-    utils.log("LIST LINE BREAK")
-    @tooltip_view.hide()
-    $list = $li.parent("ol, ul")
-    $paragraph = $("<p></p>")
-    utils.log($li.prev());
-    if($list.children().length is 1 and $li.text() is "")
-      @replaceWith("p", $list)
-
-    else if $li.text() is "" and ($li.next().length isnt 0)
-      e.preventDefault()
-
-    else if ($li.next().length is 0)
-      if($li.text() is "")
-        e.preventDefault()
-        utils.log("BREAK FROM LIST")
-        $list.after($paragraph)
-        $li.addClass("graf--removed").remove()
-
-      else if ($li.prev().length isnt 0 and $li.prev().text() is "" and @getCharacterPrecedingCaret() is "")
-        e.preventDefault()
-        utils.log("PREV IS EMPTY")
-        content = $li.html()
-        $list.after($paragraph)
-        $li.prev().remove()
-        $li.addClass("graf--removed").remove()
-        $paragraph.html(content)
-
-    if $list and $list.children().length is 0 then $list.remove()
-
-    utils.log($li);
-    if ($li.hasClass("graf--removed"))
-      utils.log("ELEMENT REMOVED")
-      @addClassesToElement($paragraph[0])
-      @setRangeAt($paragraph[0])
-      @markAsSelected($paragraph[0])
-      @scrollTo($paragraph)
-
-  handleListBackspace: ($li, e)->
-
-    $list = $li.parent("ol, ul")
-    utils.log("LIST BACKSPACE")
-
-    if($li.prev().length is 0)
-      e.preventDefault()
-
-      $list.before($li)
-      content = $li.html()
-      @replaceWith("p", $li)
-      $paragraph = $(".is-selected")
-      $paragraph.removeClass("graf--empty").html(content).attr("name", utils.generateUniqueName());
-
-      if($list.children().length is 0)
-        $list.remove()
-
-      @setupFirstAndLast()
-
-  #Remove Non-default Spans From Elements
+  # Remove Non-default Spans From Elements
   removeSpanTag: ($item)->
-
     $spans = $item.find("span")
     $(span).replaceWith($(span).html()) for span in $spans when not $(span).hasClass("defaultValue")
     $item
 
+  findSelected: ->
+    $(@el).find(".is-selected")

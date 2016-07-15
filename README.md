@@ -2,6 +2,10 @@
 
 [![Gitter](https://badges.gitter.im/Join Chat.svg)](https://gitter.im/michelson/Dante?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge&utm_content=badge)
 
+(This library is free and will stay free, but needs your support to sustain its development. There are lots of desirable new features and maintenance to do. If you work for a company using Dante or have the means to do so, please consider financial support)
+
+[![PayPal](https://www.paypalobjects.com/en_US/i/btn/btn_donate_LG.gif)](https://www.paypal.com/cgi-bin/webscr?cmd=_s-xclick&hosted_button_id=QVH5DXB326YQG)
+
 ####Just another Medium editor clone.
 
 ##Motivation:
@@ -27,6 +31,7 @@ Until now I´ve been able to implement the following features:
   + Embed data for pasted link through OEmbed services.
   + Embed media information for pasted links through OEmbed services.
   + Add or remove tooltip buttons with ease with plugin system.
++ Suggest data when type @
 + List creation with shorcuts ie:. 1. , - , 1) with spacebar or return key
 + Custom tooltip bottons support
 + CSS tries to use the same fonts used in Medium, (if you have already setup those fonts) or fallbacks to open fonts (by Google fonts) or system fonts.
@@ -62,25 +67,53 @@ Until now I´ve been able to implement the following features:
 
 ### Configuration options:
 
+#### Basic:
 + **el:**          default: #editor
 + **debug:**   default: false
-+ **upload_url:**  default: /uploads.json
-+ **upload_callback** default: empty, allows optional way to handle the server response when image is uploaded This is useful when you don't have control on the backend response.
-+ **oembed_url:**  default: http://api.embed.ly/1/oembed?url="
-+ **extract_url:** default: http://api.embed.ly/1/extract?url="
-+ **store_url:**   default: to none , url to store data with interval
-+ **store_method** default: to POST , http verb to use when store_url is present.
-+ **store_interval:** default: 15000 (15 secs), used when store_url is present.
 + **spellcheck:**  default: false
 + **default_loading_placeholder:** image placeholder to show when uploaded/pasted images are loading , defaults to a grey background
 + **disable_title** default: false, will hide the initial heading placeholder for initial text
 + **title_placeholder** default: 'Title'
 + **title** default: none, pass a pre-existing title to the editor here
 + **body_placeholder** default: 'Tell your story…'
-+ **embed_placeholder** default: 'Paste a YouTube, Vine, Vimeo, or other video link, and press Enter'
-+ **extract_placeholder** default: 'Paste a link to embed content from another site (e.g. Twitter) and press Enter'
+
+#### Widgets & Tooltips
 + **base_widgets:** default: ["uploader", "embed", "embed-extract"],
-+ **extra_tooltip_widgets:** and array of new Dante.TooltipWidget instances.
++ **extra_tooltip_widgets:** an array of new Dante.TooltipWidget instances.
+
+#### Behaviors
++ **base_behaviors:** default: ["save", "image","list", "suggest"]
++ **extra_behaviors:** an array of new Dante.Behavior instances.
+
+#### Store Behavior: 
++ **store_url:**   default: to none , url to store data with interval
++ **store_method** default: to POST , http verb to use when store_url is present.
++ **store_success_handler** default: to none. Option to set a function to handle success response for save operation, works only if store_url is present.
++ **store_interval:** default: 1500 (1.5 secs), used when store_url is present.
+
+#### Uploader:
+
++ **upload_url:**  default: /uploads.json
++ **upload_callback** default: empty, allows optional way to handle the server response when image is uploaded This is useful when you don't have control on the backend response.
++ **image_delete_callback**: default: none, returns the image data before deletion. use this if you want to destroy image from the server.
++ **image_caption_placeholder** default: "Type caption for image (optional)"
+
+
+#### Embed tool:
+
++ **oembed_url:**  default: http://api.embed.ly/1/oembed?url="
++ **extract_url:** default: http://api.embed.ly/1/extract?url="
++ **embed_placeholder** default: 'Paste a YouTube, Vine, Vimeo, or other video link, and press Enter'
++ **embed_caption_placeholder** default: "Type caption for embed (optional)"
++ **extract_placeholder** default: 'Paste a link to embed content from another site (e.g. Twitter) and press Enter'
+
+#### Suggest Behavior (new!)
++ **suggest_url**: default: "/api/suggest.json"
++ **suggest_query_param:** default: "q"
++ **suggest_query_timeout:** default: 300
++ **suggest_handler:** default: none. Handler function to handle response of suggest request
++ **suggest_resource_handler:** default: null. Handler function to handle the selected resource (when hover a link)
+
 
 ### Initialization
 
@@ -91,7 +124,9 @@ Until now I´ve been able to implement the following features:
   Use the following code to get your text into the Dante editor's body:
 ```html
 
-  <div id="editor editable" > <%= clean_dante_post( @post.excerpt ).try(:html_safe) %> </div>
+  <div id="editor editable" > 
+    <%= @post.excerpt %> 
+  </div>
 
 ```
 
@@ -109,6 +144,16 @@ in Gemfile
 
 ```//= require 'dante'```
 
+
+## Donate
+
+**Can I donate to support the development of Dante Editor?**
+
+[![PayPal](https://www.paypalobjects.com/en_US/i/btn/btn_donate_LG.gif)](https://www.paypal.com/cgi-bin/webscr?cmd=_s-xclick&hosted_button_id=QVH5DXB326YQG)
+
+if you want to donate you will enable us to spend more time improving the library and we will be greatly thankful with you. If your company uses Dante please consider making a contribution. We are available for hire to work on or with Dante. Thanks!
+
+
 ## Disclaimer:
 
 This Library will work fine on latest versions of Chrome/Safari/FF/IE.
@@ -122,7 +167,7 @@ see TODO list below.**
 Some dependencies are required in order to Dante editor works properly:
 
 + Jquery
-+ [Underscore](https://github.com/documentcloud/underscore)
++ [Underscore](https://github.com/jashkenas/underscore)
 + [Sanitize.js](https://github.com/gbirke/sanitize.js)
 
 
@@ -162,8 +207,8 @@ tests are located in source/tests and /source/assets/spec folder and accessible 
 
 ## MAINTAINERS:
 
-+ [Miguel Michelson](http://github.com/michelson)
-+ [Cristian Ferrari](http://github.com/cristianferrarig)
++ [Miguel Michelson](https://github.com/michelson)
++ [Cristian Ferrari](https://github.com/cristianferrarig)
 
 ### CONTRIBUTORS
 
